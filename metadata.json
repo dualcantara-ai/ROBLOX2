@@ -1,0 +1,6 @@
+{
+  "name": "BloxVerse - 3D Game Creation & Social Gaming Platform",
+  "description": "The ultimate sandbox gaming universe. Create 3D games in the built-in Studio, explore player-made worlds, customize blocky avatars, connect with friends, and trade with virtual currency.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
