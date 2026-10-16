@@ -54,212 +54,234 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
     );
   };
 
-  // Recomendações: Wide banner rectangular cards (Images 1 - Section 2)
-  const recommendedGames = games.slice(0, 12);
+  // Recomendações: Wide banner rectangular cards
+  const recommendedGames = games;
 
-  // Continuar: Square game cards (Images 1 - Section 3)
-  const continueGames = games.slice(2);
+  // Continuar: Square game cards
+  const continueGames = games;
 
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-8 select-none font-sans text-slate-100">
       
-      {/* 1. SEÇÃO DE AMIZADES (Exact Match of Screenshot 1 Top Row) */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-1.5 cursor-pointer group w-fit">
-          <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
-            Amizades ({friends.length > 0 ? friends.length : 68})
-          </h2>
-          <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
-        </div>
-
-        {/* Horizontal Friend Avatars Scroll */}
-        <div className="flex items-start gap-4 overflow-x-auto pb-2 pt-1 scrollbar-thin scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
-          {/* Add Friend Circle (Screenshot 1: "+ Adicionar...") */}
-          <div className="flex flex-col items-center gap-1.5 shrink-0 group cursor-pointer w-18">
-            <div className="w-16 h-16 rounded-full bg-[#1e2029] border-2 border-dashed border-white/25 group-hover:border-white/60 flex items-center justify-center transition-all group-hover:scale-105 shadow-md">
-              <Plus className="w-6 h-6 text-slate-400 group-hover:text-white transition-colors" />
-            </div>
-            <span className="text-[11px] font-bold text-slate-400 group-hover:text-white truncate w-full text-center">
-              Adicionar...
-            </span>
-          </div>
-
-          {/* Friends List */}
-          {friends.map((friend) => {
-            const isOnline = friend.status !== 'offline';
-            const isPlaying = friend.status === 'playing';
-
-            return (
-              <div 
-                key={friend.id}
-                onClick={() => {
-                  sounds.playClick();
-                  if (friend.currentGame) {
-                    const matchedGame = games.find(g => friend.currentGame?.includes(g.title.slice(0, 8)));
-                    if (matchedGame) onPlayGame(matchedGame);
-                  }
-                }}
-                className="flex flex-col items-center gap-1.5 shrink-0 group cursor-pointer w-18"
-                title={`${friend.displayName} ${friend.currentGame ? `(Jogando: ${friend.currentGame})` : isOnline ? '(Online)' : '(Offline)'}`}
-              >
-                <div className="relative">
-                  {/* Avatar Head Circle with customized colors */}
-                  <div 
-                    className="w-16 h-16 rounded-full flex items-center justify-center border-2 border-white/20 group-hover:border-white shadow-md group-hover:scale-105 transition-all text-xl"
-                    style={{ backgroundColor: friend.avatarColors.head || '#facc15' }}
-                  >
-                    <span>{friend.avatarHat || '😄'}</span>
-                  </div>
-
-                  {/* Green Online Dot Indicator (Screenshot 1) */}
-                  {isOnline && (
-                    <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-[#10b981] border-2 border-[#111216] shadow-sm animate-pulse" />
-                  )}
-                </div>
-
-                <div className="w-full text-center leading-tight">
-                  <span className="text-[11px] font-bold text-slate-200 group-hover:text-white truncate block">
-                    {friend.displayName}
-                  </span>
-                  {isPlaying && friend.currentGame ? (
-                    <span className="text-[9px] text-amber-400 font-semibold truncate block max-w-18">
-                      {friend.currentGame}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* 2. RECOMENDAÇÕES PARA VOCÊ (Exact Match of Screenshot 1 Wide Cards Grid) */}
-      <section className="space-y-3.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 cursor-pointer group">
+      {/* 1. SEÇÃO DE AMIZADES (Ocultada quando todas as amizades são retiradas) */}
+      {friends.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-center gap-1.5 cursor-pointer group w-fit">
             <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
-              Recomendações para você
+              Amizades ({friends.length})
             </h2>
             <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
           </div>
-        </div>
 
-        {/* 6 Columns Grid matching Screenshot 1 */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5 sm:gap-4">
-          {recommendedGames.map((game, idx) => {
-            // Authentic like percentage from data
-            const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 500))) * 100);
+          {/* Horizontal Friend Avatars Scroll */}
+          <div className="flex items-start gap-4 overflow-x-auto pb-2 pt-1 scrollbar-thin scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
+            {/* Add Friend Circle */}
+            <div className="flex flex-col items-center gap-1.5 shrink-0 group cursor-pointer w-18">
+              <div className="w-16 h-16 rounded-full bg-[#1e2029] border-2 border-dashed border-white/25 group-hover:border-white/60 flex items-center justify-center transition-all group-hover:scale-105 shadow-md">
+                <Plus className="w-6 h-6 text-slate-400 group-hover:text-white transition-colors" />
+              </div>
+              <span className="text-[11px] font-bold text-slate-400 group-hover:text-white truncate w-full text-center">
+                Adicionar...
+              </span>
+            </div>
 
-            return (
-              <div
-                key={game.id}
-                onClick={() => {
-                  sounds.playClick();
-                  setSelectedGameDetails(game);
-                }}
-                className="group flex flex-col space-y-2 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-              >
-                {/* 16:9 Banner Image (Screenshot 1) */}
-                <div className="relative aspect-[16/9] rounded-2xl overflow-hidden bg-[#181a24] border border-white/10 group-hover:border-white/40 shadow-lg">
-                  <img
-                    src={game.thumbnail}
-                    alt={game.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    loading="lazy"
-                  />
+            {/* Friends List */}
+            {friends.map((friend) => {
+              const isOnline = friend.status !== 'offline';
+              const isPlaying = friend.status === 'playing';
 
-                  {/* Quick Play Hover Overlay Button */}
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        sounds.playClick();
-                        onPlayGame(game);
-                      }}
-                      className="w-11 h-11 rounded-full bg-[#10b981] hover:bg-[#059669] text-white flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-all cursor-pointer"
-                      title="Jogar Agora"
+              return (
+                <div 
+                  key={friend.id}
+                  onClick={() => {
+                    sounds.playClick();
+                    if (friend.currentGame) {
+                      const matchedGame = games.find(g => friend.currentGame?.includes(g.title.slice(0, 8)));
+                      if (matchedGame) onPlayGame(matchedGame);
+                    }
+                  }}
+                  className="flex flex-col items-center gap-1.5 shrink-0 group cursor-pointer w-18"
+                  title={`${friend.displayName} ${friend.currentGame ? `(Jogando: ${friend.currentGame})` : isOnline ? '(Online)' : '(Offline)'}`}
+                >
+                  <div className="relative">
+                    <div 
+                      className="w-16 h-16 rounded-full flex items-center justify-center border-2 border-white/20 group-hover:border-white shadow-md group-hover:scale-105 transition-all text-xl"
+                      style={{ backgroundColor: friend.avatarColors.head || '#facc15' }}
                     >
-                      <Play className="w-5 h-5 fill-white ml-0.5" />
-                    </button>
+                      <span>{friend.avatarHat || '😄'}</span>
+                    </div>
+
+                    {isOnline && (
+                      <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-[#10b981] border-2 border-[#111216] shadow-sm animate-pulse" />
+                    )}
                   </div>
-                </div>
 
-                {/* Info Text (Screenshot 1: Title and "👍 Avaliação XX%") */}
-                <div className="space-y-0.5">
-                  <h3 className="text-xs sm:text-sm font-extrabold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
-                    {game.title}
-                  </h3>
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-semibold">
-                    <ThumbsUp className="w-3.5 h-3.5 fill-slate-400/20" />
-                    <span>Avaliação {likePercent}%</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* 3. CONTINUAR (Exact Match of Screenshot 1 Square Cards Row) */}
-      <section className="space-y-3.5 pt-2">
-        <div className="flex items-center gap-1.5 cursor-pointer group w-fit">
-          <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
-            Continuar
-          </h2>
-          <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
-        </div>
-
-        {/* Square 1:1 Aspect Ratio Carousel/Grid matching Screenshot 1 */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 sm:gap-3.5">
-          {continueGames.map((game, idx) => {
-            const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 500))) * 100);
-            const activePlayers = game.playingCount >= 1000 
-              ? `${(game.playingCount / 1000).toFixed(1)} mil` 
-              : `${game.playingCount}`;
-
-            return (
-              <div
-                key={`cont-${game.id}-${idx}`}
-                onClick={() => {
-                  sounds.playClick();
-                  onPlayGame(game);
-                }}
-                className="group flex flex-col space-y-1.5 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
-              >
-                {/* Square 1:1 Thumbnail (Screenshot 1 bottom row) */}
-                <div className="relative aspect-square rounded-2xl overflow-hidden bg-[#181a24] border border-white/10 group-hover:border-white/40 shadow-lg">
-                  <img
-                    src={game.thumbnail}
-                    alt={game.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    loading="lazy"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <Play className="w-8 h-8 fill-white text-white drop-shadow-md" />
-                  </div>
-                </div>
-
-                {/* Title & Stats (Screenshot 1: "👍 86%  👥 1,6 mil") */}
-                <div className="space-y-0.5">
-                  <h4 className="text-xs font-bold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
-                    {game.title}
-                  </h4>
-                  <div className="flex items-center gap-2 text-[10px] text-slate-400 font-semibold">
-                    <span className="flex items-center gap-1">
-                      <ThumbsUp className="w-3 h-3 fill-slate-400/20" />
-                      {likePercent}%
+                  <div className="w-full text-center leading-tight">
+                    <span className="text-[11px] font-bold text-slate-200 group-hover:text-white truncate block">
+                      {friend.displayName}
                     </span>
-                    <span className="flex items-center gap-1 text-slate-400">
-                      <Users className="w-3 h-3" />
-                      {activePlayers}
-                    </span>
+                    {isPlaying && friend.currentGame ? (
+                      <span className="text-[9px] text-amber-400 font-semibold truncate block max-w-18">
+                        {friend.currentGame}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* 2. JOGOS OU ESTADO VAZIO */}
+      {games.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 px-6 text-center bg-[#151720]/80 border border-white/10 rounded-3xl space-y-5 shadow-2xl backdrop-blur-md">
+          {/* Black tilted logo */}
+          <div className="w-20 h-20 bg-black border border-white/20 rounded-2xl flex items-center justify-center shadow-xl transform -rotate-12">
+            <div className="w-6 h-6 bg-[#151720] rounded-md transform rotate-12" />
+          </div>
+          <div className="space-y-2 max-w-md">
+            <h2 className="text-2xl font-black text-white tracking-wide">Nenhum jogo no momento</h2>
+            <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+              Todos os jogos foram retirados. Crie e publique sua própria experiência 3D com blocos dinâmicos e scripts Luau no Basehub Studio!
+            </p>
+          </div>
+          {onOpenStudio && (
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onOpenStudio();
+              }}
+              className="flex items-center gap-2 bg-[#00a2ff] hover:bg-[#0090e3] text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-lg shadow-[#00a2ff]/25 transition-all cursor-pointer hover:scale-105 active:scale-95"
+            >
+              <Sparkles className="w-4 h-4" />
+              Criar no Basehub Studio
+            </button>
+          )}
         </div>
-      </section>
+      ) : (
+        <>
+          {/* RECOMENDAÇÕES PARA VOCÊ */}
+          <section className="space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 cursor-pointer group">
+                <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
+                  Recomendações para você
+                </h2>
+                <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5 sm:gap-4">
+              {recommendedGames.map((game, idx) => {
+                const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 500))) * 100);
+
+                return (
+                  <div
+                    key={game.id}
+                    onClick={() => {
+                      sounds.playClick();
+                      setSelectedGameDetails(game);
+                    }}
+                    className="group flex flex-col space-y-2 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                  >
+                    <div className="relative aspect-[16/9] rounded-2xl overflow-hidden bg-[#181a24] border border-white/10 group-hover:border-white/40 shadow-lg">
+                      <img
+                        src={game.thumbnail}
+                        alt={game.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        loading="lazy"
+                      />
+
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            sounds.playClick();
+                            onPlayGame(game);
+                          }}
+                          className="w-11 h-11 rounded-full bg-[#10b981] hover:bg-[#059669] text-white flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-all cursor-pointer"
+                          title="Jogar Agora"
+                        >
+                          <Play className="w-5 h-5 fill-white ml-0.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <h3 className="text-xs sm:text-sm font-extrabold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
+                        {game.title}
+                      </h3>
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-semibold">
+                        <ThumbsUp className="w-3.5 h-3.5 fill-slate-400/20" />
+                        <span>Avaliação {likePercent}%</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* CONTINUAR */}
+          <section className="space-y-3.5 pt-2">
+            <div className="flex items-center gap-1.5 cursor-pointer group w-fit">
+              <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
+                Continuar
+              </h2>
+              <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 sm:gap-3.5">
+              {continueGames.map((game, idx) => {
+                const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 500))) * 100);
+                const activePlayers = game.playingCount >= 1000 
+                  ? `${(game.playingCount / 1000).toFixed(1)} mil` 
+                  : `${game.playingCount}`;
+
+                return (
+                  <div
+                    key={`cont-${game.id}-${idx}`}
+                    onClick={() => {
+                      sounds.playClick();
+                      onPlayGame(game);
+                    }}
+                    className="group flex flex-col space-y-1.5 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                  >
+                    <div className="relative aspect-square rounded-2xl overflow-hidden bg-[#181a24] border border-white/10 group-hover:border-white/40 shadow-lg">
+                      <img
+                        src={game.thumbnail}
+                        alt={game.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Play className="w-8 h-8 fill-white text-white drop-shadow-md" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <h4 className="text-xs font-bold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
+                        {game.title}
+                      </h4>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-semibold">
+                        <span className="flex items-center gap-1">
+                          <ThumbsUp className="w-3 h-3 fill-slate-400/20" />
+                          {likePercent}%
+                        </span>
+                        <span className="flex items-center gap-1 text-slate-400">
+                          <Users className="w-3 h-3" />
+                          {activePlayers}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </>
+      )}
 
       {/* GAME DETAILS MODAL (When clicking a card to view passes/badges and play) */}
       {selectedGameDetails && (

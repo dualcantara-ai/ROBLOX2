@@ -61,9 +61,9 @@ export const ActiveGameModal: React.FC<ActiveGameModalProps> = ({
   const [chatInput, setChatInput] = useState<string>('');
   const [activeChatBubble, setActiveChatBubble] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { id: 'm-1', sender: 'System', text: `Welcome to ${game.title}! Use WASD/Arrows to run, Space to jump.`, timestamp: 'Now', isSystem: true },
-    { id: 'm-2', sender: 'PixelNinja', text: 'Hey BloxMaster, race you to the top platform!', timestamp: 'Just now' },
-    { id: 'm-3', sender: 'Luna', text: 'Be careful on the red lava beam, it is one-hit KO!', timestamp: 'Just now' }
+    { id: 'm-1', sender: 'System', text: `Bem-vindo ao ${game.title}! Use WASD para andar, Espaço para pular e [1-5] para equipar ferramentas.`, timestamp: 'Agora', isSystem: true },
+    { id: 'm-2', sender: 'gabriel2025', text: 'E aí pessoal! Todos os scripts estão rodando perfeitamente!', timestamp: 'Agora' },
+    { id: 'm-3', sender: 'larry', text: 'Boa sorte no jogo!', timestamp: 'Agora' }
   ]);
   const [sessionCoins, setSessionCoins] = useState<number>(0);
   const [hasWon, setHasWon] = useState<boolean>(false);
@@ -96,17 +96,17 @@ export const ActiveGameModal: React.FC<ActiveGameModalProps> = ({
   useEffect(() => {
     const timer = setInterval(() => {
       const simulatedChats = [
-        { sender: 'PixelNinja', text: 'Nice jump!' },
-        { sender: 'Luna', text: 'Who wants to trade after this round?' },
-        { sender: 'RetroNoob', text: 'Almost got that big treasure coin!' },
-        { sender: 'PixelNinja', text: 'GG everyone! Love this obby.' }
+        { sender: 'gabriel2025', text: 'Belo pulo!' },
+        { sender: 'larry', text: 'Os blocos com física respondem super rápido.' },
+        { sender: 'WEY', text: 'Peguei as moedas!' },
+        { sender: 'Sammsson', text: 'GG galera! Excelente jogo.' }
       ];
       const randomMsg = simulatedChats[Math.floor(Math.random() * simulatedChats.length)];
       setChatMessages(prev => [...prev.slice(-15), {
         id: `m-${Date.now()}`,
         sender: randomMsg.sender,
         text: randomMsg.text,
-        timestamp: 'Now'
+        timestamp: 'Agora'
       }]);
     }, 18000);
 
@@ -201,8 +201,8 @@ export const ActiveGameModal: React.FC<ActiveGameModalProps> = ({
               className="flex items-center gap-1.5 bg-[#2b2d31] hover:bg-[#35373c] active:scale-95 px-2.5 py-1.5 rounded-xl border border-white/15 transition-all cursor-pointer group shadow-sm"
               title="Roblox Menu (ESC)"
             >
-              <div className="w-5 h-5 bg-white rounded-[4px] flex items-center justify-center transform -rotate-15 group-hover:rotate-0 transition-transform shadow">
-                <div className="w-2 h-2 bg-[#2b2d31] rounded-[2px]" />
+              <div className="w-5 h-5 bg-black border border-white/30 rounded-[4px] flex items-center justify-center transform -rotate-15 group-hover:rotate-0 transition-transform shadow">
+                <div className="w-1.5 h-1.5 bg-[#2b2d31] rounded-[1px] transform rotate-15" />
               </div>
               <span className="text-[11px] font-black text-white hidden sm:inline font-mono">ESC</span>
             </button>
@@ -390,11 +390,11 @@ export const ActiveGameModal: React.FC<ActiveGameModalProps> = ({
             <div className="bg-[#191b1d] border-2 border-white/15 rounded-3xl w-full max-w-md p-6 shadow-2xl space-y-5">
               <div className="flex items-center justify-between pb-3 border-b border-white/10">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 bg-white rounded-[5px] flex items-center justify-center transform -rotate-12 shadow">
-                    <div className="w-2.5 h-2.5 bg-[#191b1d] rounded-[2px]" />
+                  <div className="w-7 h-7 bg-black border border-white/25 rounded-[5px] flex items-center justify-center transform -rotate-12 shadow">
+                    <div className="w-2.5 h-2.5 bg-white rounded-[2px]" />
                   </div>
                   <div>
-                    <h3 className="font-black text-base text-white">BloxVerse Menu</h3>
+                    <h3 className="font-black text-base text-white">Basehub Menu</h3>
                     <p className="text-[11px] text-slate-400">{game.title}</p>
                   </div>
                 </div>
@@ -576,21 +576,21 @@ export const ActiveGameModal: React.FC<ActiveGameModalProps> = ({
               <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl text-slate-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  PixelNinja
+                  gabriel2025
                 </span>
                 <span className="font-mono text-slate-400">120</span>
               </div>
               <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl text-slate-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  Luna
+                  larry
                 </span>
                 <span className="font-mono text-slate-400">85</span>
               </div>
               <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl text-slate-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  RetroNoob
+                  WEY
                 </span>
                 <span className="font-mono text-slate-400">40</span>
               </div>

@@ -1,6 +1,6 @@
 {
-  "name": "BloxVerse - 3D Game Creation & Social Gaming Platform",
-  "description": "The ultimate sandbox gaming universe. Create 3D games in the built-in Studio, explore player-made worlds, customize blocky avatars, connect with friends, and trade with virtual currency.",
+  "name": "Basehub - 3D Game Creation & Social Gaming Platform",
+  "description": "Basehub: O universo definitivo de criação e jogos sandbox 3D. Crie mundos no Basehub Studio, jogue experiências feitas por jogadores, programe scripts Luau e divirta-se com amigos.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

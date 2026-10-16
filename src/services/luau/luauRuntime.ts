@@ -12,7 +12,8 @@ export class LuauEngine {
   private runningScripts: Map<string, { cancel: () => void; isRunning: boolean }> = new Map();
   private touchListeners: Map<string, Set<(hit: any) => void>> = new Map();
   private clickListeners: Map<string, Set<(player: any) => void>> = new Map();
-  private toolActivatedListeners: Map<string, Set<() => void>> = new Map();
+  public toolActivatedListeners: Map<string, Set<() => void>> = new Map();
+  public guiClickListeners: Map<string, Set<() => void>> = new Map();
 
   /**
    * Helper to format values into hex colors
@@ -71,13 +72,19 @@ export class LuauEngine {
         }
       }
 
+      if (!line.trim()) {
+        processedLines.push('');
+        continue;
+      }
+
       // Trim Luau type annotations like `: number`, `: Part`, `: boolean`, `:: any`
       line = line.replace(/:\s*([A-Za-z0-9_<>]+)(\s*=|\s*,|\s*\))/g, '$2');
       line = line.replace(/::\s*[A-Za-z0-9_]+/g, '');
 
-      // Replace operators
+      // Replace operators & keywords
       line = line.replace(/~=/g, '!==');
       line = line.replace(/\s*\.\.\s*/g, ' + ');
+      line = line.replace(/\bnil\b/g, 'null');
 
       // Logical operators: and -> &&, or -> ||, not -> !
       line = line.replace(/\band\b/g, '&&');
@@ -87,11 +94,33 @@ export class LuauEngine {
       // Replace Luau table length #var with var.length
       line = line.replace(/#([A-Za-z0-9_.]+)/g, '($1.length || 0)');
 
+      // Inline statements: if cond then stmt end
+      const inlineIfMatch = line.match(/^(\s*)if\s+(.+?)\s+then\s+(.+?)\s+end\s*;?$/);
+      if (inlineIfMatch) {
+        let cond = inlineIfMatch[2].trim();
+        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
+        line = `${inlineIfMatch[1]}if (${cond}) { ${inlineIfMatch[3]}; }`;
+        processedLines.push(line);
+        continue;
+      }
+
+      // Inline while: while cond do stmt end
+      const inlineWhileMatch = line.match(/^(\s*)while\s+(.+?)\s+do\s+(.+?)\s+end\s*;?$/);
+      if (inlineWhileMatch) {
+        let cond = inlineWhileMatch[2].trim();
+        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
+        line = `${inlineWhileMatch[1]}while (${cond}) { await __yieldCheck(); ${inlineWhileMatch[3]}; }`;
+        processedLines.push(line);
+        continue;
+      }
+
       // Loops and control flow
       // while <cond> do -> while (<cond>) { await __yieldCheck();
       const whileMatch = line.match(/^(\s*)while\s+(.+)\s+do\s*$/);
       if (whileMatch) {
-        line = `${whileMatch[1]}while (${whileMatch[2]}) { await __yieldCheck();`;
+        let cond = whileMatch[2].trim();
+        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
+        line = `${whileMatch[1]}while (${cond}) { await __yieldCheck();`;
         processedLines.push(line);
         continue;
       }
@@ -107,7 +136,9 @@ export class LuauEngine {
       // until <cond> -> } while (!<cond>);
       const untilMatch = line.match(/^(\s*)until\s+(.+)\s*$/);
       if (untilMatch) {
-        line = `${untilMatch[1]}} while (!(${untilMatch[2]}));`;
+        let cond = untilMatch[2].trim();
+        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
+        line = `${untilMatch[1]}} while (!(${cond}));`;
         processedLines.push(line);
         continue;
       }
@@ -125,14 +156,15 @@ export class LuauEngine {
         continue;
       }
 
-      // for k, v in pairs(tbl) do
-      const forPairsMatch = line.match(/^(\s*)for\s+([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s+in\s+(?:pairs|ipairs)\((.+)\)\s+do\s*$/);
-      if (forPairsMatch) {
-        const indent = forPairsMatch[1];
-        const k = forPairsMatch[2];
-        const v = forPairsMatch[3];
-        const tbl = forPairsMatch[4];
-        line = `${indent}for (const [${k}, ${v}] of Object.entries(${tbl})) { await __yieldCheck();`;
+      // for k, v in pairs(...) do / for k, v in ipairs(...) do / for v in tbl do
+      const forInMatch = line.match(/^(\s*)for\s+([A-Za-z0-9_]+)(?:\s*,\s*([A-Za-z0-9_]+))?\s+in\s+(.+)\s+do\s*$/);
+      if (forInMatch) {
+        const indent = forInMatch[1];
+        const k = forInMatch[3] ? forInMatch[2] : '_';
+        const v = forInMatch[3] ? forInMatch[3] : forInMatch[2];
+        let tbl = forInMatch[4].trim();
+        tbl = tbl.replace(/^(?:pairs|ipairs)\((.+)\)$/, '$1');
+        line = `${indent}for (const [${k}, ${v}] of __iterate(${tbl})) { await __yieldCheck();`;
         processedLines.push(line);
         continue;
       }
@@ -140,7 +172,9 @@ export class LuauEngine {
       // if <cond> then
       const ifMatch = line.match(/^(\s*)if\s+(.+)\s+then\s*$/);
       if (ifMatch) {
-        line = `${ifMatch[1]}if (${ifMatch[2]}) {`;
+        let cond = ifMatch[2].trim();
+        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
+        line = `${ifMatch[1]}if (${cond}) {`;
         processedLines.push(line);
         continue;
       }
@@ -148,7 +182,9 @@ export class LuauEngine {
       // elseif <cond> then
       const elseifMatch = line.match(/^(\s*)elseif\s+(.+)\s+then\s*$/);
       if (elseifMatch) {
-        line = `${elseifMatch[1]}} else if (${elseifMatch[2]}) {`;
+        let cond = elseifMatch[2].trim();
+        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
+        line = `${elseifMatch[1]}} else if (${cond}) {`;
         processedLines.push(line);
         continue;
       }
@@ -205,9 +241,11 @@ export class LuauEngine {
       // Replace Luau method invocations :Method( -> .Method(
       line = line.replace(/:([A-Za-z0-9_]+)\s*\(/g, '.$1(');
 
-      // Compound assignment operators: += and -= on Vector3 / CFrame properties
+      // Compound assignment operators: +=, -=, *=, /= on Vector3 / CFrame properties
       line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\+=\s*(.+)$/, '$1 = __vecAdd($1, $2)');
       line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*-=\s*(.+)$/, '$1 = __vecSub($1, $2)');
+      line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\*=\s*(.+)$/, '$1 = __vecMul($1, $2)');
+      line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\/=\s*(.+)$/, '$1 = __vecDiv($1, $2)');
 
       // Full assignment self-math: a.Position = a.Position + expr
       line = line.replace(/([A-Za-z0-9_.]+\.Position)\s*=\s*\1\s*\+\s*(.+)$/, '$1 = __vecAdd($1, $2)');
@@ -612,6 +650,22 @@ export class LuauEngine {
   }
 
   /**
+   * Fires GUI button click event
+   */
+  public triggerGuiClick(guiId: string) {
+    const listeners = this.guiClickListeners.get(guiId);
+    if (listeners && listeners.size > 0) {
+      listeners.forEach(cb => {
+        try {
+          cb();
+        } catch (err: any) {
+          console.error('Error in Luau GUI click listener:', err);
+        }
+      });
+    }
+  }
+
+  /**
    * Executes a Luau Script instance
    */
   public async executeScript(
@@ -751,6 +805,45 @@ export class LuauEngine {
       return Vector3.new(ax - bx, ay - by, az - bz);
     };
 
+    const __vecMul = (a: any, b: any) => {
+      if (typeof b === 'number') {
+        const ax = Number(a?.x ?? a?.X ?? 0);
+        const ay = Number(a?.y ?? a?.Y ?? 0);
+        const az = Number(a?.z ?? a?.Z ?? 0);
+        return Vector3.new(ax * b, ay * b, az * b);
+      }
+      if (typeof a === 'number') {
+        const bx = Number(b?.x ?? b?.X ?? 0);
+        const by = Number(b?.y ?? b?.Y ?? 0);
+        const bz = Number(b?.z ?? b?.Z ?? 0);
+        return Vector3.new(bx * a, by * a, bz * a);
+      }
+      return Vector3.new(
+        Number(a?.x ?? a?.X ?? 0) * Number(b?.x ?? b?.X ?? 1),
+        Number(a?.y ?? a?.Y ?? 0) * Number(b?.y ?? b?.Y ?? 1),
+        Number(a?.z ?? a?.Z ?? 0) * Number(b?.z ?? b?.Z ?? 1)
+      );
+    };
+
+    const __vecDiv = (a: any, b: any) => {
+      const divisor = typeof b === 'number' ? (b || 1) : Number(b?.x ?? b?.X ?? 1);
+      const ax = Number(a?.x ?? a?.X ?? 0);
+      const ay = Number(a?.y ?? a?.Y ?? 0);
+      const az = Number(a?.z ?? a?.Z ?? 0);
+      return Vector3.new(ax / divisor, ay / divisor, az / divisor);
+    };
+
+    const __iterate = (tbl: any) => {
+      if (!tbl) return [];
+      if (Array.isArray(tbl)) {
+        return tbl.map((v, i) => [i + 1, v]);
+      }
+      if (typeof tbl === 'object') {
+        return Object.entries(tbl);
+      }
+      return [];
+    };
+
     // Color3
     const Color3 = {
       fromRGB: (r = 255, g = 255, b = 255) => ({
@@ -772,6 +865,70 @@ export class LuauEngine {
         B: Number(b)
       }),
       fromHex: (hex = '#ffffff') => LuauEngine.parseColor(hex)
+    };
+
+    // BrickColor
+    const BrickColor = {
+      new: (nameOrNumber: string | number) => {
+        if (typeof nameOrNumber === 'string') {
+          const colorMap: Record<string, string> = {
+            'bright red': '#ff0000',
+            'really red': '#ff0000',
+            'red': '#ff0000',
+            'bright blue': '#0000ff',
+            'really blue': '#0000ff',
+            'blue': '#0000ff',
+            'bright green': '#00ff00',
+            'lime green': '#00ff00',
+            'green': '#00ff00',
+            'bright yellow': '#ffff00',
+            'yellow': '#ffff00',
+            'black': '#000000',
+            'white': '#ffffff',
+            'institutional white': '#ffffff',
+            'medium stone grey': '#a0a5a9',
+            'dark stone grey': '#635f61',
+            'gold': '#e8ab2d'
+          };
+          const hex = colorMap[nameOrNumber.toLowerCase()] || '#3b82f6';
+          return Color3.fromHex(hex);
+        }
+        return Color3.new(1, 1, 1);
+      },
+      random: () => {
+        const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
+        return Color3.fromHex(colors[Math.floor(Math.random() * colors.length)]);
+      },
+      White: () => Color3.fromHex('#ffffff'),
+      Black: () => Color3.fromHex('#000000'),
+      Red: () => Color3.fromHex('#ff0000'),
+      Green: () => Color3.fromHex('#00ff00'),
+      Blue: () => Color3.fromHex('#0000ff')
+    };
+
+    // UDim2 & UDim
+    const UDim2 = {
+      new: (xScale = 0, xOffset = 0, yScale = 0, yOffset = 0) => ({
+        X: { Scale: xScale, Offset: xOffset },
+        Y: { Scale: yScale, Offset: yOffset },
+        x: xOffset,
+        y: yOffset,
+        Scale: { X: xScale, Y: yScale },
+        Offset: { X: xOffset, Y: yOffset }
+      }),
+      fromScale: (x = 0, y = 0) => UDim2.new(x, 0, y, 0),
+      fromOffset: (x = 0, y = 0) => UDim2.new(0, x, 0, y)
+    };
+
+    const UDim = {
+      new: (scale = 0, offset = 0) => ({ Scale: scale, Offset: offset })
+    };
+
+    // OS library
+    const customOs = {
+      time: () => Math.floor(Date.now() / 1000),
+      clock: () => performance.now() / 1000,
+      date: () => new Date().toISOString()
     };
 
     // CFrame
@@ -798,19 +955,6 @@ export class LuauEngine {
         if (min === undefined && max === undefined) return Math.random();
         if (max === undefined) return Math.floor(Math.random() * (min || 1)) + 1;
         return Math.floor(Math.random() * (max - (min || 0) + 1)) + (min || 0);
-      }
-    };
-
-    // Script object
-    const parentPart = context.parentPart || (script.parentPartId ? context.parts.find(p => p.id === script.parentPartId) : undefined);
-    const parentProxy = parentPart ? this.createPartProxy(parentPart, context) : null;
-
-    const scriptObj = {
-      Name: script.name,
-      Parent: parentProxy,
-      Enabled: script.enabled,
-      Destroy: () => {
-        cancel();
       }
     };
 
@@ -876,7 +1020,18 @@ export class LuauEngine {
     };
 
     // Workspace & Game
-    const workspaceObj = new Proxy({
+    const workspaceObj: any = new Proxy({
+      Name: 'Workspace',
+      className: 'Workspace',
+      Position: Vector3.new(0, 0, 0),
+      Touched: {
+        Connect: (cb: any) => {
+          if (context.parts.length > 0) {
+            return this.createPartProxy(context.parts[0], context).Touched.Connect(cb);
+          }
+          return { Disconnect: () => {} };
+        }
+      },
       FindFirstChild: (name: string) => {
         const found = context.parts.find(p => p.name.toLowerCase() === name.toLowerCase());
         return found ? this.createPartProxy(found, context) : null;
@@ -924,6 +1079,58 @@ export class LuauEngine {
         if (lower === 'players') return gameObj.Players;
         if (lower === 'tweenservice') return TweenService;
         if (lower === 'lighting') return gameObj.Lighting;
+        if (lower === 'runservice') {
+          return {
+            Heartbeat: {
+              Connect: (cb: (dt: number) => void) => {
+                let active = true;
+                let lastTime = performance.now();
+                const loop = () => {
+                  if (!active || isCancelled) return;
+                  const now = performance.now();
+                  const dt = (now - lastTime) / 1000;
+                  lastTime = now;
+                  try { cb(dt); } catch (e) { console.error(e); }
+                  requestAnimationFrame(loop);
+                };
+                requestAnimationFrame(loop);
+                return { Disconnect: () => { active = false; } };
+              }
+            },
+            RenderStepped: {
+              Connect: (cb: (dt: number) => void) => {
+                let active = true;
+                let lastTime = performance.now();
+                const loop = () => {
+                  if (!active || isCancelled) return;
+                  const now = performance.now();
+                  const dt = (now - lastTime) / 1000;
+                  lastTime = now;
+                  try { cb(dt); } catch (e) { console.error(e); }
+                  requestAnimationFrame(loop);
+                };
+                requestAnimationFrame(loop);
+                return { Disconnect: () => { active = false; } };
+              }
+            },
+            Stepped: {
+              Connect: (cb: (time: number, dt: number) => void) => {
+                let active = true;
+                let lastTime = performance.now();
+                const loop = () => {
+                  if (!active || isCancelled) return;
+                  const now = performance.now();
+                  const dt = (now - lastTime) / 1000;
+                  lastTime = now;
+                  try { cb(now / 1000, dt); } catch (e) { console.error(e); }
+                  requestAnimationFrame(loop);
+                };
+                requestAnimationFrame(loop);
+                return { Disconnect: () => { active = false; } };
+              }
+            }
+          };
+        }
         if (lower === 'debris') {
           return {
             AddItem: (item: any, lifetime = 5) => {
@@ -933,7 +1140,33 @@ export class LuauEngine {
             }
           };
         }
+        if (lower === 'soundservice') {
+          return {
+            PlayLocalSound: () => sounds.playCoin()
+          };
+        }
+        if (lower === 'replicatedstorage') {
+          return {
+            FindFirstChild: (name: string) => null,
+            WaitForChild: async (name: string) => null
+          };
+        }
         return {};
+      }
+    };
+
+    // Script object with resilient fallback parent
+    const parentPart = context.parentPart || (script.parentPartId && script.parentPartId !== 'Workspace' ? context.parts.find(p => p.id === script.parentPartId) : undefined);
+    const parentProxy = parentPart
+      ? this.createPartProxy(parentPart, context)
+      : (context.parts.length > 0 ? this.createPartProxy(context.parts[0], context) : workspaceObj);
+
+    const scriptObj = {
+      Name: script.name,
+      Parent: parentProxy,
+      Enabled: script.enabled,
+      Destroy: () => {
+        cancel();
       }
     };
 
@@ -1116,23 +1349,28 @@ export class LuauEngine {
           return toolProxy;
         }
 
-        // 5. GUI Instances (ScreenGui, TextLabel, TextButton, BillboardGui, Frame)
-        if (['screengui', 'billboardgui', 'surfacegui', 'textlabel', 'textbutton', 'frame'].includes(lower)) {
+        // 5. GUI Instances (ScreenGui, TextLabel, TextButton, BillboardGui, Frame, ImageLabel, ImageButton, ScrollingFrame, TextBox)
+        if (['screengui', 'billboardgui', 'surfacegui', 'textlabel', 'textbutton', 'frame', 'imagelabel', 'imagebutton', 'scrollingframe', 'textbox'].includes(lower)) {
           const guiClass = lower === 'screengui' ? 'ScreenGui'
             : lower === 'billboardgui' ? 'BillboardGui'
             : lower === 'surfacegui' ? 'SurfaceGui'
             : lower === 'textbutton' ? 'TextButton'
+            : lower === 'imagebutton' ? 'ImageButton'
+            : lower === 'imagelabel' ? 'ImageLabel'
+            : lower === 'scrollingframe' ? 'ScrollingFrame'
+            : lower === 'textbox' ? 'TextBox'
             : lower === 'frame' ? 'Frame' : 'TextLabel';
 
           const guiObj: BloxGuiElement = {
             id: `gui-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             className: guiClass as any,
             name: guiClass,
-            text: guiClass === 'TextButton' ? 'Button' : guiClass === 'TextLabel' ? 'Label' : '',
+            text: guiClass.includes('Button') ? 'Button' : guiClass.includes('Label') ? 'Label' : '',
             textColor: '#ffffff',
-            backgroundColor: 'rgba(15, 23, 42, 0.85)',
+            backgroundColor: 'rgba(15, 23, 42, 0.88)',
             backgroundTransparency: 0,
-            visible: true
+            visible: true,
+            position: { x: 24, y: 80 }
           };
 
           const clickListeners = new Set<() => void>();
@@ -1165,10 +1403,42 @@ export class LuauEngine {
               guiObj.visible = Boolean(v);
               if (context.onAddGui) context.onAddGui({ ...guiObj });
             },
+            get Position() { return UDim2.fromOffset(guiObj.position?.x || 24, guiObj.position?.y || 80); },
+            set Position(v: any) {
+              const x = v?.X?.Offset ?? v?.x ?? 24;
+              const y = v?.Y?.Offset ?? v?.y ?? 80;
+              guiObj.position = { x, y };
+              if (context.onAddGui) context.onAddGui({ ...guiObj });
+            },
+            get Size() { return UDim2.fromOffset(guiObj.size?.x || 160, guiObj.size?.y || 44); },
+            set Size(v: any) {
+              const x = v?.X?.Offset ?? v?.x ?? 160;
+              const y = v?.Y?.Offset ?? v?.y ?? 44;
+              guiObj.size = { x, y };
+              if (context.onAddGui) context.onAddGui({ ...guiObj });
+            },
             MouseButton1Click: {
               Connect: (cb: () => void) => {
+                if (!engine.guiClickListeners.has(guiObj.id)) {
+                  engine.guiClickListeners.set(guiObj.id, new Set());
+                }
+                engine.guiClickListeners.get(guiObj.id)!.add(cb);
                 clickListeners.add(cb);
-                return { Disconnect: () => clickListeners.delete(cb) };
+                return {
+                  Disconnect: () => {
+                    engine.guiClickListeners.get(guiObj.id)?.delete(cb);
+                    clickListeners.delete(cb);
+                  }
+                };
+              }
+            },
+            MouseButton1Down: {
+              Connect: (cb: () => void) => {
+                if (!engine.guiClickListeners.has(guiObj.id)) {
+                  engine.guiClickListeners.set(guiObj.id, new Set());
+                }
+                engine.guiClickListeners.get(guiObj.id)!.add(cb);
+                return { Disconnect: () => engine.guiClickListeners.get(guiObj.id)?.delete(cb) };
               }
             },
             triggerClick: () => {
@@ -1212,15 +1482,32 @@ export class LuauEngine {
           };
         }
 
-        // 8. Value Objects (IntValue, NumberValue, StringValue, BoolValue)
-        if (['intvalue', 'numbervalue', 'stringvalue', 'boolvalue'].includes(lower)) {
-          let currentVal: any = lower === 'stringvalue' ? '' : lower === 'boolvalue' ? false : 0;
+        // 8. Value Objects (IntValue, NumberValue, StringValue, BoolValue, Color3Value, Vector3Value, CFrameValue, ObjectValue)
+        if (['intvalue', 'numbervalue', 'stringvalue', 'boolvalue', 'color3value', 'vector3value', 'cframevalue', 'objectvalue'].includes(lower)) {
+          let currentVal: any = lower === 'stringvalue' ? '' 
+            : lower === 'boolvalue' ? false 
+            : lower === 'color3value' ? Color3.new(1, 1, 1)
+            : lower === 'vector3value' ? Vector3.new(0, 0, 0)
+            : lower === 'cframevalue' ? CFrame.new(0, 0, 0)
+            : lower === 'objectvalue' ? null : 0;
           const changedListeners = new Set<(newVal: any) => void>();
+          const classNameFormatted = lower === 'intvalue' ? 'IntValue'
+            : lower === 'numbervalue' ? 'NumberValue'
+            : lower === 'stringvalue' ? 'StringValue'
+            : lower === 'boolvalue' ? 'BoolValue'
+            : lower === 'color3value' ? 'Color3Value'
+            : lower === 'vector3value' ? 'Vector3Value'
+            : lower === 'cframevalue' ? 'CFrameValue' : 'ObjectValue';
+
           return {
-            className: lower === 'intvalue' ? 'IntValue' : lower === 'numbervalue' ? 'NumberValue' : lower === 'stringvalue' ? 'StringValue' : 'BoolValue',
+            Name: classNameFormatted,
+            className: classNameFormatted,
             get Value() { return currentVal; },
             set Value(v: any) {
-              currentVal = lower === 'intvalue' ? Math.round(Number(v) || 0) : lower === 'numbervalue' ? (Number(v) || 0) : lower === 'boolvalue' ? Boolean(v) : String(v);
+              currentVal = lower === 'intvalue' ? Math.round(Number(v) || 0)
+                : lower === 'numbervalue' ? (Number(v) || 0)
+                : lower === 'boolvalue' ? Boolean(v)
+                : lower === 'stringvalue' ? String(v) : v;
               changedListeners.forEach(cb => { try { cb(currentVal); } catch (e) { console.error(e); } });
             },
             Changed: {
@@ -1234,12 +1521,13 @@ export class LuauEngine {
           };
         }
 
-        // 9. Folder / Model
-        if (['folder', 'model'].includes(lower)) {
+        // 9. Folder / Model / Configuration
+        if (['folder', 'model', 'configuration'].includes(lower)) {
           const children: any[] = [];
+          const cName = lower === 'folder' ? 'Folder' : lower === 'configuration' ? 'Configuration' : 'Model';
           return {
-            Name: lower === 'folder' ? 'Folder' : 'Model',
-            className: lower === 'folder' ? 'Folder' : 'Model',
+            Name: cName,
+            className: cName,
             Parent: parent || null,
             GetChildren: () => children,
             FindFirstChild: (name: string) => children.find(c => c.Name?.toLowerCase() === name.toLowerCase()) || null,
@@ -1247,8 +1535,165 @@ export class LuauEngine {
           };
         }
 
+        // 10. ParticleEmitter, Fire, Smoke, Sparkles
+        if (['particleemitter', 'fire', 'smoke', 'sparkles'].includes(lower)) {
+          return {
+            id: `effect-${Date.now()}`,
+            Name: lower === 'particleemitter' ? 'ParticleEmitter' : lower === 'fire' ? 'Fire' : lower === 'smoke' ? 'Smoke' : 'Sparkles',
+            className: lower === 'particleemitter' ? 'ParticleEmitter' : lower === 'fire' ? 'Fire' : lower === 'smoke' ? 'Smoke' : 'Sparkles',
+            Texture: 'rbxasset://textures/particles/sparkles_main.png',
+            Rate: 20,
+            Speed: 5,
+            Lifetime: 2,
+            Size: 1,
+            Heat: 9,
+            RiseVelocity: 2,
+            Color: Color3.new(1, 1, 1),
+            Enabled: true,
+            Emit: (_count?: number) => {},
+            Parent: parent || null,
+            Destroy: () => {}
+          };
+        }
+
+        // 11. Highlight
+        if (lower === 'highlight') {
+          return {
+            id: `hl-${Date.now()}`,
+            Name: 'Highlight',
+            className: 'Highlight',
+            FillColor: Color3.new(1, 0, 0),
+            OutlineColor: Color3.new(1, 1, 1),
+            FillTransparency: 0.5,
+            OutlineTransparency: 0,
+            Enabled: true,
+            Adornee: parent || null,
+            Parent: parent || null,
+            Destroy: () => {}
+          };
+        }
+
+        // 12. ClickDetector & ProximityPrompt
+        if (lower === 'clickdetector') {
+          return {
+            Name: 'ClickDetector',
+            className: 'ClickDetector',
+            MaxActivationDistance: 32,
+            MouseClick: {
+              Connect: (cb: (player: any) => void) => {
+                if (parent?.id) {
+                  return parent.ClickDetector.MouseClick.Connect(cb);
+                }
+                return { Disconnect: () => {} };
+              }
+            },
+            MouseHoverEnter: { Connect: () => ({ Disconnect: () => {} }) },
+            MouseHoverLeave: { Connect: () => ({ Disconnect: () => {} }) },
+            Parent: parent || null,
+            Destroy: () => {}
+          };
+        }
+
+        if (lower === 'proximityprompt') {
+          return {
+            Name: 'ProximityPrompt',
+            className: 'ProximityPrompt',
+            ActionText: 'Interact',
+            ObjectText: '',
+            HoldDuration: 0.5,
+            MaxActivationDistance: 12,
+            Triggered: {
+              Connect: (cb: (player: any) => void) => {
+                if (parent?.id) {
+                  return parent.ProximityPrompt.Triggered.Connect(cb);
+                }
+                return { Disconnect: () => {} };
+              }
+            },
+            Parent: parent || null,
+            Destroy: () => {}
+          };
+        }
+
+        // 13. Humanoid
+        if (lower === 'humanoid') {
+          let hp = 100;
+          let maxHp = 100;
+          let ws = 16;
+          let jp = 32;
+          const diedListeners = new Set<() => void>();
+          const hpListeners = new Set<(newHp: number) => void>();
+
+          return {
+            Name: 'Humanoid',
+            className: 'Humanoid',
+            get Health() { return hp; },
+            set Health(v: number) {
+              hp = Math.max(0, Math.min(maxHp, Number(v) || 0));
+              hpListeners.forEach(cb => { try { cb(hp); } catch (e) { console.error(e); } });
+              if (hp <= 0) {
+                diedListeners.forEach(cb => { try { cb(); } catch (e) { console.error(e); } });
+              }
+            },
+            get MaxHealth() { return maxHp; },
+            set MaxHealth(v: number) { maxHp = Number(v) || 100; },
+            get WalkSpeed() { return ws; },
+            set WalkSpeed(v: number) { ws = Number(v) || 16; },
+            get JumpPower() { return jp; },
+            set JumpPower(v: number) { jp = Number(v) || 32; },
+            TakeDamage: (dmg: number) => {
+              hp = Math.max(0, hp - (Number(dmg) || 0));
+              hpListeners.forEach(cb => { try { cb(hp); } catch (e) { console.error(e); } });
+              if (hp <= 0) {
+                diedListeners.forEach(cb => { try { cb(); } catch (e) { console.error(e); } });
+              }
+              if (context.getPlayer) context.getPlayer().takeDamage(dmg);
+            },
+            Died: {
+              Connect: (cb: () => void) => {
+                diedListeners.add(cb);
+                return { Disconnect: () => diedListeners.delete(cb) };
+              }
+            },
+            HealthChanged: {
+              Connect: (cb: (newHp: number) => void) => {
+                hpListeners.add(cb);
+                return { Disconnect: () => hpListeners.delete(cb) };
+              }
+            },
+            Parent: parent || null,
+            Destroy: () => {}
+          };
+        }
+
+        // 14. Additional Part primitives (MeshPart, WedgePart, TrussPart, SpawnLocation)
+        if (['meshpart', 'wedgepart', 'trusspart', 'spawnlocation'].includes(lower)) {
+          const type = lower === 'wedgepart' ? 'wedge' : lower === 'spawnlocation' ? 'spawn' : 'block';
+          const newPartId = `part-${lower}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+          const newPart: BloxPart = {
+            id: newPartId,
+            name: className,
+            className: (className.charAt(0).toUpperCase() + className.slice(1)) as any,
+            type: type as any,
+            position: { x: 0, y: 5, z: 0 },
+            size: { x: 2, y: 2, z: 2 },
+            rotation: { x: 0, y: 0, z: 0 },
+            color: '#3b82f6',
+            material: 'plastic',
+            anchored: true,
+            isAnchored: true,
+            canCollide: true,
+            transparency: 0
+          };
+          context.onAddPart(newPart);
+          const proxy = this.createPartProxy(newPart, context);
+          if (parent) proxy.Parent = parent;
+          return proxy;
+        }
+
         return {
           Name: className,
+          className: className,
           Parent: parent || null,
           Destroy: () => {}
         };
@@ -1369,11 +1814,15 @@ export class LuauEngine {
       return (async function(
         script,
         workspace,
+        Workspace,
         game,
         Instance,
         Vector3,
         Color3,
+        BrickColor,
         CFrame,
+        UDim2,
+        UDim,
         TweenInfo,
         task,
         wait,
@@ -1383,12 +1832,23 @@ export class LuauEngine {
         error,
         __vecAdd,
         __vecSub,
+        __vecMul,
+        __vecDiv,
+        __iterate,
         __yieldCheck,
         Enum,
         table,
         string,
+        os,
+        tick,
+        time,
+        delay,
+        spawn,
+        pairs,
+        ipairs,
         tonumber,
-        tostring
+        tostring,
+        nil
       ) {
         try {
           ${transpiled}
@@ -1404,11 +1864,15 @@ export class LuauEngine {
       runner(
         scriptObj,
         workspaceObj,
+        workspaceObj,
         gameObj,
         Instance,
         Vector3,
         Color3,
+        BrickColor,
         CFrame,
+        UDim2,
+        UDim,
         TweenInfo,
         task,
         task.wait,
@@ -1418,12 +1882,23 @@ export class LuauEngine {
         (...args: any[]) => logOutput('error', ...args),
         __vecAdd,
         __vecSub,
+        __vecMul,
+        __vecDiv,
+        __iterate,
         yieldCheck,
         Enum,
         customTable,
         customString,
+        customOs,
+        () => performance.now() / 1000,
+        () => performance.now() / 1000,
+        (sec: number, cb: () => void) => setTimeout(cb, Math.max(0, (Number(sec) || 0) * 1000)),
+        (cb: () => void) => setTimeout(cb, 0),
+        (tbl: any) => __iterate(tbl),
+        (tbl: any) => __iterate(tbl),
         (val: any) => (isNaN(Number(val)) ? null : Number(val)),
-        (val: any) => String(val)
+        (val: any) => String(val),
+        null
       ).catch((runtimeErr: any) => {
         if (runtimeErr?.message !== '__SCRIPT_CANCELLED__') {
           logOutput('error', `Erro em tempo de execução: ${runtimeErr?.message || String(runtimeErr)}`);

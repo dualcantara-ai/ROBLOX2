@@ -43,10 +43,9 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const [activeTab, setActiveTab] = useState<'friends' | 'chat' | 'groups' | 'profile'>('friends');
   const [selectedFriendChat, setSelectedFriendChat] = useState<Friend | null>(friends[0] || null);
   const [chatMessages, setChatMessages] = useState<{ [friendId: string]: { sender: string; text: string; time: string }[] }>({
-    'friend-1': [
-      { sender: 'PixelNinja_X', text: 'Yo BloxMaster! Did you try that new bounce pad jump?', time: '10:45 AM' },
-      { sender: 'BloxMaster_99', text: 'Yeah it sends you 25 studs high into the sky haha!', time: '10:46 AM' },
-      { sender: 'PixelNinja_X', text: 'Let me know if you want to collaborate on an obby level.', time: '10:48 AM' }
+    'friend-4': [
+      { sender: 'gabriel2025', text: 'E aí BloxMaster! Bora testar as novidades do Basehub?', time: '10:45 AM' },
+      { sender: 'BloxMaster', text: 'Bora! Todos os scripts e ferramentas estão funcionando.', time: '10:46 AM' }
     ]
   });
   const [chatInput, setChatInput] = useState<string>('');
@@ -148,7 +147,13 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
           {/* Friends Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {friends.map(friend => {
+            {friends.length === 0 ? (
+              <div className="col-span-full py-16 text-center bg-[#151720]/80 rounded-2xl border border-white/5 space-y-2">
+                <p className="text-slate-400 text-sm font-semibold">Nenhuma amizade no momento.</p>
+                <p className="text-slate-500 text-xs">Adicione novos amigos pelo nome de usuário acima!</p>
+              </div>
+            ) : (
+              friends.map(friend => {
               const isPlaying = friend.status === 'playing';
               const isStudio = friend.status === 'studio';
               const isOnline = friend.status === 'online';
@@ -211,8 +216,9 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                   </div>
                 </div>
               );
-            })}
-          </div>
+            })
+          )}
+        </div>
         </div>
       )}
 
@@ -227,29 +233,35 @@ export const SocialHub: React.FC<SocialHubProps> = ({
               </span>
             </div>
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {friends.map(friend => {
-                const isSelected = selectedFriendChat?.id === friend.id;
-                return (
-                  <button
-                    key={friend.id}
-                    onClick={() => { sounds.playClick(); setSelectedFriendChat(friend); }}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all cursor-pointer ${
-                      isSelected ? 'bg-[#00a2ff] text-white shadow-md' : 'hover:bg-[#222533] text-slate-300'
-                    }`}
-                  >
-                    <div
-                      className="w-9 h-9 rounded-lg flex items-center justify-center text-base border border-white/10 shrink-0"
-                      style={{ backgroundColor: friend.avatarColors.head }}
+              {friends.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500">
+                  Nenhuma amizade ou conversa ativa.
+                </div>
+              ) : (
+                friends.map(friend => {
+                  const isSelected = selectedFriendChat?.id === friend.id;
+                  return (
+                    <button
+                      key={friend.id}
+                      onClick={() => { sounds.playClick(); setSelectedFriendChat(friend); }}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all cursor-pointer ${
+                        isSelected ? 'bg-[#00a2ff] text-white shadow-md' : 'hover:bg-[#222533] text-slate-300'
+                      }`}
                     >
-                      {friend.avatarHat || '😄'}
-                    </div>
-                    <div className="truncate">
-                      <div className="font-extrabold text-xs truncate">{friend.displayName}</div>
-                      <div className="text-[10px] opacity-75 truncate">{friend.status}</div>
-                    </div>
-                  </button>
-                );
-              })}
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-base border border-white/10 shrink-0"
+                        style={{ backgroundColor: friend.avatarColors.head }}
+                      >
+                        {friend.avatarHat || '😄'}
+                      </div>
+                      <div className="truncate">
+                        <div className="font-extrabold text-xs truncate">{friend.displayName}</div>
+                        <div className="text-[10px] opacity-75 truncate">{friend.status}</div>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
 

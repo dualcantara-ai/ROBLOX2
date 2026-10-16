@@ -78,7 +78,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <>
       <header className="h-16 bg-[#181a20] border-b border-[#242733] px-3 sm:px-6 flex items-center justify-between gap-3 sm:gap-6 sticky top-0 z-40 select-none shadow-md">
-      {/* Brand: ROBLOX SELECT (Exact Match of Screenshot 1) */}
+      {/* Brand: BASEHUB */}
       <div className="flex items-center gap-3 shrink-0">
         <button
           onClick={() => {
@@ -87,15 +87,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           }}
           className="flex items-center gap-2 group focus:outline-none cursor-pointer"
         >
-          {/* Roblox iconic tilted square logo */}
-          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center transform -rotate-12 shadow group-hover:rotate-0 transition-transform">
+          {/* Basehub iconic black logo */}
+          <div className="w-8 h-8 bg-black border border-white/30 rounded-lg flex items-center justify-center transform -rotate-12 shadow-lg group-hover:rotate-0 transition-transform">
             <div className="w-2.5 h-2.5 bg-[#181a20] rounded-[2px] transform rotate-12" />
           </div>
           <div className="flex items-center gap-1.5 font-sans">
-            <span className="font-black text-xl tracking-wider text-white">ROBLOX</span>
-            <span className="bg-white text-slate-900 text-[10px] font-black uppercase px-1.5 py-0.2 rounded-[4px] tracking-widest shadow-xs hidden sm:inline-block">
-              SELECT
-            </span>
+            <span className="font-black text-xl tracking-wider text-white">BASEHUB</span>
           </div>
         </button>
       </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import confetti from 'canvas-confetti';
@@ -24,7 +24,7 @@ export interface RuntimeTool {
   name: string;
   icon: string;
   slot: number; // 1 to 5
-  type: 'sword' | 'cola' | 'speed_coil' | 'gravity_coil' | 'flashlight';
+  type: 'sword' | 'cola' | 'speed_coil' | 'gravity_coil' | 'flashlight' | 'custom';
   description: string;
 }
 
@@ -155,6 +155,25 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
 
   const scriptsRef = useRef<LuauScriptInstance[]>(scripts);
   scriptsRef.current = scripts;
+
+  const runAllScriptsRef = useRef<(() => void) | null>(null);
+
+  // Signature of all scripts and scripted parts to ensure scripts are always executing when changed
+  const scriptsSignature = useMemo(() => {
+    const sSig = (scripts || []).map(s => `${s.id}:${s.enabled !== false}:${s.source}`).join('|');
+    const pSig = (parts || []).map(p => {
+      const pL = (p.luauScripts || []).map(l => `${l.id}:${l.enabled !== false}:${l.source}`).join(';');
+      const pS = p.script ? `${p.script.trigger}:${p.script.action}:${p.script.parameter}` : '';
+      return `${p.id}:${pL}:${pS}`;
+    }).join('|');
+    return `${sSig}__${pSig}`;
+  }, [scripts, parts]);
+
+  useEffect(() => {
+    if (runAllScriptsRef.current) {
+      runAllScriptsRef.current();
+    }
+  }, [scriptsSignature]);
 
   const onUpdatePartRef = useRef(onUpdatePart);
   onUpdatePartRef.current = onUpdatePart;
@@ -304,7 +323,7 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
     const tool = equippedToolRef.current;
     if (!tool) return;
 
-    if (tool.type === 'sword') {
+    if (tool.type === 'sword' || tool.type === 'custom') {
       sounds.playJump();
       // Arm slash swing
       if (characterControllerRef.current) {
@@ -976,46 +995,23 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
         flashlightLightRef.current = spot;
 
         toolGroup.position.set(0, -0.9, 0.4);
+      } else if (tool.type === 'custom') {
+        const handleGeo = new THREE.CylinderGeometry(0.12, 0.14, 1.2, 12);
+        const handleMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.6, roughness: 0.3 });
+        const wand = new THREE.Mesh(handleGeo, handleMat);
+        const tipGeo = new THREE.SphereGeometry(0.24, 16, 16);
+        const tipMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, emissive: 0xf59e0b, emissiveIntensity: 0.8 });
+        const tip = new THREE.Mesh(tipGeo, tipMat);
+        tip.position.y = 0.65;
+        toolGroup.add(wand);
+        toolGroup.add(tip);
+        toolGroup.position.set(0, -0.9, 0.4);
+        toolGroup.rotation.x = Math.PI / 4;
       }
 
       characterController.rightArm.add(toolGroup);
       activeToolMeshRef.current = toolGroup;
     };
-
-    // Simulated NPC
-    const npcAvatar = createBlockyCharacter({
-      bodyColors: {
-        head: '#f59e0b',
-        torso: '#ec4899',
-        leftArm: '#f59e0b',
-        rightArm: '#f59e0b',
-        leftLeg: '#3b82f6',
-        rightLeg: '#3b82f6'
-      },
-      scale: { height: 1, width: 1, head: 1 },
-      animation: 'idle',
-      equippedHat: 'hat-fedora'
-    });
-    npcAvatar.root.position.set(4, spawnPoint.y, spawnPoint.z + 2);
-    scene.add(npcAvatar.root);
-
-    const npcCanvas = document.createElement('canvas');
-    npcCanvas.width = 256;
-    npcCanvas.height = 64;
-    const npcCtx = npcCanvas.getContext('2d')!;
-    npcCtx.fillStyle = 'rgba(15, 23, 42, 0.7)';
-    npcCtx.roundRect(10, 10, 236, 44, 12);
-    npcCtx.fill();
-    npcCtx.fillStyle = '#67e8f9';
-    npcCtx.font = 'bold 18px sans-serif';
-    npcCtx.textAlign = 'center';
-    npcCtx.textBaseline = 'middle';
-    npcCtx.fillText('Friend: PixelNinja', 128, 32);
-    const npcTex = new THREE.CanvasTexture(npcCanvas);
-    const npcSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: npcTex, transparent: true }));
-    npcSprite.scale.set(3.2, 0.8, 1);
-    npcSprite.position.set(0, 6.2, 0);
-    npcAvatar.root.add(npcSprite);
 
     // Physics & Player State
     const savedPlayerPos = persistentCameraState.current.playerPos;
@@ -1360,23 +1356,66 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
     };
 
     // Auto-run Luau scripts when playing or testing
-    const gameScripts: LuauScriptInstance[] = [];
-    if (scriptsRef.current && scriptsRef.current.length > 0) {
-      gameScripts.push(...scriptsRef.current);
-    }
-    partsRef.current.forEach(p => {
-      if (p.luauScripts && p.luauScripts.length > 0) {
-        gameScripts.push(...p.luauScripts);
+    const runAllScripts = () => {
+      const gameScripts: LuauScriptInstance[] = [];
+      if (scriptsRef.current && scriptsRef.current.length > 0) {
+        gameScripts.push(...scriptsRef.current);
       }
-    });
+      partsRef.current.forEach(p => {
+        if (p.luauScripts && p.luauScripts.length > 0) {
+          gameScripts.push(...p.luauScripts);
+        }
+        if (p.script && (!p.luauScripts || p.luauScripts.length === 0)) {
+          let source = '';
+          if (p.script.action === 'rotate') {
+            const rotSpeed = typeof p.script.parameter === 'number' ? p.script.parameter : 2;
+            source = `while true do\n  task.wait(0.03)\n  script.Parent.Rotation = Vector3.new(script.Parent.Rotation.X, script.Parent.Rotation.Y + ${rotSpeed}, script.Parent.Rotation.Z)\nend`;
+          } else if (p.script.action === 'damage') {
+            const dmg = typeof p.script.parameter === 'number' ? p.script.parameter : 100;
+            source = `script.Parent.Touched:Connect(function(hit)\n  local humanoid = hit.Parent and hit.Parent:FindFirstChild("Humanoid")\n  if humanoid then humanoid:TakeDamage(${dmg}) end\nend)`;
+          } else if (p.script.action === 'heal') {
+            const healAmt = typeof p.script.parameter === 'number' ? p.script.parameter : 25;
+            source = `script.Parent.Touched:Connect(function(hit)\n  local humanoid = hit.Parent and hit.Parent:FindFirstChild("Humanoid")\n  if humanoid then humanoid.Health = math.min(100, humanoid.Health + ${healAmt}) end\nend)`;
+          } else if (p.script.action === 'bounce') {
+            source = `script.Parent.Touched:Connect(function(hit)\n  local humanoid = hit.Parent and hit.Parent:FindFirstChild("Humanoid")\n  if humanoid then humanoid.JumpPower = 35 end\nend)`;
+          } else if (p.script.action === 'speedBoost') {
+            source = `script.Parent.Touched:Connect(function(hit)\n  local humanoid = hit.Parent and hit.Parent:FindFirstChild("Humanoid")\n  if humanoid then humanoid.WalkSpeed = 32 end\nend)`;
+          }
+          if (source) {
+            gameScripts.push({
+              id: `script-auto-${p.id}`,
+              name: `${p.name}Script`,
+              className: 'Script',
+              source,
+              enabled: true,
+              parentPartId: p.id
+            });
+          }
+        }
+      });
 
-    if (!isStudioMode || isStudioTestingRef.current) {
+      if (customTools && customTools.length > 0) {
+        customTools.forEach(tool => {
+          if (tool.scriptSource && tool.scriptSource.trim()) {
+            gameScripts.push({
+              id: `tool-script-${tool.id}`,
+              name: `${tool.name}Script`,
+              className: 'Script',
+              source: tool.scriptSource,
+              enabled: true
+            });
+          }
+        });
+      }
+
+      console.log(`[Basehub Engine] Executando todos os ${gameScripts.length} scripts Luau quando o jogo começar...`);
       gameScripts.forEach(script => {
         if (script.enabled !== false) {
+          const targetParent = partsRef.current.find(p => p.id === script.parentPartId) || partsRef.current[0];
           luauEngine.executeScript(script, {
             scriptId: script.id,
             scriptName: script.name,
-            parentPart: partsRef.current.find(p => p.id === script.parentPartId),
+            parentPart: targetParent,
             parts: partsRef.current,
             onUpdatePart: (partId, partial) => {
               const mesh = partMeshes.get(partId);
@@ -1459,7 +1498,12 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
           });
         }
       });
-    }
+    };
+
+    runAllScriptsRef.current = runAllScripts;
+
+    // Always auto-run Luau scripts continuously (game mode, studio edit mode, and playtesting)
+    runAllScripts();
 
     // Main animation loop with Sub-stepped Precision Kinematic Collision
     let animId: number;
@@ -1470,6 +1514,7 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
       if (resetTriggerRef.current && resetTriggerRef.current > 0 && resetTriggerRef.current !== lastResetRef.current) {
         lastResetRef.current = resetTriggerRef.current;
         respawn();
+        runAllScripts();
       }
 
       if (wasTesting !== isStudioTestingRef.current) {
@@ -1483,6 +1528,8 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
         } else {
           studioCamTarget.set(playerPos.x, playerPos.y + 1, playerPos.z);
         }
+        // Keep scripts always executing continuously
+        runAllScripts();
       }
 
       const frameDelta = Math.min(clock.getDelta(), 0.05);
@@ -1553,12 +1600,6 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
         persistentCameraState.current.currentVelX = velocityX;
         persistentCameraState.current.currentVelZ = velocityZ;
       }
-
-      // Animated NPC
-      const npcAway = Math.sin(time * 0.7) * 4;
-      npcAvatar.root.position.x = spawnPointRef.current.x + 4 + npcAway;
-      npcAvatar.root.rotation.y = npcAway > 0 ? Math.PI / 2 : -Math.PI / 2;
-      npcAvatar.updateAnimation(frameDelta, time, true, false, 0, false, 1.0);
 
       // Studio non-testing mode: Orbit Camera only
       if (isStudioMode && !isStudioTestingRef.current) {
@@ -2011,6 +2052,7 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
       characterControllerRef.current = null;
       activeToolMeshRef.current = null;
       flashlightLightRef.current = null;
+      runAllScriptsRef.current = null;
       luauEngine.stopAll();
     };
   }, [isStudioMode]);
@@ -2072,6 +2114,7 @@ export const BloxEngine3D: React.FC<BloxEngine3DProps> = ({
                 }`}
                 onClick={isButton ? () => {
                   sounds.playClick();
+                  luauEngine.triggerGuiClick(gui.id);
                   if (gui.onClickAction === 'heal') {
                     setHealth(h => Math.min(100, h + 30));
                   } else if (gui.onClickAction === 'damage') {

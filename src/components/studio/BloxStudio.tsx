@@ -364,7 +364,7 @@ print("✨ Desenvolvedor:", "${username || 'BloxMaster'}")
   const [showAddAttr, setShowAddAttr] = useState<boolean>(false);
 
   // Studio UI panels (On mobile screens, panels start closed so 3D viewport has 100% space)
-  const [activeTool, setActiveTool] = useState<'select' | 'move' | 'scale' | 'color'>('select');
+  const [activeTool, setActiveTool] = useState<'move' | 'scale' | 'color'>('move');
   const [showToolbox, setShowToolbox] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth >= 1024 : false);
   const [showProperties, setShowProperties] = useState<boolean>(true);
   const [showExplorer, setShowExplorer] = useState<boolean>(() => typeof window !== 'undefined' ? window.innerWidth >= 1024 : false);
@@ -598,39 +598,12 @@ print("Script Global do Workspace em execução!")
     setIsCopilotOpen(true);
   };
 
-  // Run/Stop Luau Scripts when Play Testing starts/stops in Studio
+  // Scripts are always executing continuously in Studio; stop only on unmount
   useEffect(() => {
-    if (isTesting) {
-      scripts.forEach(script => {
-        if (script.enabled) {
-          const targetPart = parts.find(p => p.id === script.parentPartId);
-          luauEngine.executeScript(script, {
-            scriptId: script.id,
-            scriptName: script.name,
-            parentPart: targetPart,
-            parts,
-            onUpdatePart: (id, partial) => {
-              setParts(prev => prev.map(p => p.id === id ? { ...p, ...partial } : p));
-            },
-            onAddPart: (newPart) => {
-              setParts(prev => [...prev, newPart]);
-            },
-            onRemovePart: (id) => {
-              setParts(prev => prev.filter(p => p.id !== id));
-            },
-            onLog: (entry) => {
-              console.log(`[Studio Luau: ${entry.scriptName}]`, entry.message);
-            }
-          });
-        }
-      });
-    } else {
-      luauEngine.stopAll();
-    }
     return () => {
       luauEngine.stopAll();
     };
-  }, [isTesting, scripts]);
+  }, []);
 
   // Add Part from toolbox
   const handleAddPart = (type: PartType | 'physics-crate' | 'physics-sphere' | 'invisible-barrier' | 'ghost-part') => {
@@ -1026,10 +999,10 @@ print("Script Global do Workspace em execução!")
 
           {/* Logo Badge */}
           <div className="flex items-center gap-2 pr-2 sm:pr-3 border-r border-[#2d313f] shrink-0">
-            <div className="w-7 h-7 bg-[#00a2ff] rounded-lg flex items-center justify-center font-black text-xs text-white shadow">
-              BS
+            <div className="w-7 h-7 bg-black border border-white/30 rounded-lg flex items-center justify-center transform -rotate-12 shadow">
+              <div className="w-2 h-2 bg-[#1a1c24] rounded-[1.5px] transform rotate-12" />
             </div>
-            <span className="font-bold text-sm tracking-wide text-white hidden sm:inline">Blox Studio</span>
+            <span className="font-bold text-sm tracking-wide text-white hidden sm:inline">Basehub Studio</span>
           </div>
 
           {/* Edit Mode Badge if editing an existing game */}
@@ -1086,18 +1059,8 @@ print("Script Global do Workspace em execução!")
             </button>
           )}
 
-          {/* Tools: Move, Scale, Color */}
+          {/* Tools: Move, Scale */}
           <div className="flex items-center bg-[#14151b] p-1 rounded-xl border border-[#2d313f] shrink-0">
-            <button
-              onClick={() => setActiveTool('select')}
-              className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                activeTool === 'select' ? 'bg-[#00a2ff] text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Select Part"
-            >
-              <Box className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Select</span>
-            </button>
             <button
               onClick={() => setActiveTool('move')}
               className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
@@ -1809,7 +1772,50 @@ print("Script Global do Workspace em execução!")
                               </div>
                             </button>
 
-                            {/* Scripts attached to this specific Part */}
+                            {/* Child Instances attached to this specific Part */}
+                            {/* 1. Textures & Decals */}
+                            {part.textures?.map(tex => (
+                              <div
+                                key={tex.id}
+                                className="ml-5 flex items-center justify-between px-2 py-0.5 rounded text-[10px] text-amber-300 font-mono border-l border-amber-500/40 bg-amber-950/20"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <Sparkles className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                                  <span className="truncate">{tex.name} ({tex.face})</span>
+                                </div>
+                                <span className="text-[8px] text-amber-400/80 font-mono">{tex.className}</span>
+                              </div>
+                            ))}
+
+                            {/* 2. WeldConstraints */}
+                            {part.weldConstraints?.map(weld => (
+                              <div
+                                key={weld.id}
+                                className="ml-5 flex items-center justify-between px-2 py-0.5 rounded text-[10px] text-cyan-300 font-mono border-l border-cyan-500/40 bg-cyan-950/20"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <Anchor className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
+                                  <span className="truncate">{weld.name}</span>
+                                </div>
+                                <span className="text-[8px] text-cyan-400/80 font-mono">Weld</span>
+                              </div>
+                            ))}
+
+                            {/* 3. BillboardGuis */}
+                            {part.guis?.map(gui => (
+                              <div
+                                key={gui.id}
+                                className="ml-5 flex items-center justify-between px-2 py-0.5 rounded text-[10px] text-emerald-300 font-mono border-l border-emerald-500/40 bg-emerald-950/20"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <Box className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                                  <span className="truncate">{gui.name}: &quot;{gui.text}&quot;</span>
+                                </div>
+                                <span className="text-[8px] text-emerald-400/80 font-mono">{gui.className}</span>
+                              </div>
+                            ))}
+
+                            {/* 4. Luau Scripts */}
                             {partScripts.map(scr => (
                               <div
                                 key={scr.id}
@@ -1884,6 +1890,100 @@ print("Script Global do Workspace em execução!")
                           );
                         })}
                       </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. StarterPack Folder (Roblox Tools) */}
+                <div className="rounded-lg bg-[#14151c]/60 border border-[#262936] p-1">
+                  <div className="flex items-center justify-between px-1.5 py-1 text-slate-300 font-semibold text-xs">
+                    <button
+                      onClick={() => setStarterPackExpanded(prev => !prev)}
+                      className="flex items-center gap-1.5 hover:text-white"
+                    >
+                      {starterPackExpanded ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      <span>StarterPack</span>
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleAddTool}
+                        className="p-1 hover:bg-[#252836] rounded text-amber-400 hover:text-amber-300 cursor-pointer"
+                        title="Adicionar Tool ao StarterPack"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                      <span className="text-[10px] text-slate-500">({tools.length} Tools)</span>
+                    </div>
+                  </div>
+
+                  {starterPackExpanded && (
+                    <div className="pl-4 pr-1 py-0.5 space-y-0.5">
+                      {tools.length === 0 ? (
+                        <div className="text-[10px] text-slate-500 italic py-0.5">
+                          Nenhuma Tool criada. Clique em + para criar.
+                        </div>
+                      ) : (
+                        tools.map(tool => (
+                          <div
+                            key={tool.id}
+                            className="flex items-center justify-between px-2 py-1 text-[11px] text-amber-200 rounded bg-amber-950/20 border border-amber-800/30 font-mono"
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span>{tool.icon || '⚔️'}</span>
+                              <span className="truncate">{tool.name}</span>
+                            </div>
+                            <span className="text-[9px] text-amber-400/80 font-mono">Tool</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. StarterGui Folder (Roblox ScreenGuis) */}
+                <div className="rounded-lg bg-[#14151c]/60 border border-[#262936] p-1">
+                  <div className="flex items-center justify-between px-1.5 py-1 text-slate-300 font-semibold text-xs">
+                    <button
+                      onClick={() => setStarterGuiExpanded(prev => !prev)}
+                      className="flex items-center gap-1.5 hover:text-white"
+                    >
+                      {starterGuiExpanded ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+                      <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>StarterGui</span>
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleAddScreenGui}
+                        className="p-1 hover:bg-[#252836] rounded text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                        title="Adicionar ScreenGui ao StarterGui"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                      <span className="text-[10px] text-slate-500">({guis.length} GUIs)</span>
+                    </div>
+                  </div>
+
+                  {starterGuiExpanded && (
+                    <div className="pl-4 pr-1 py-0.5 space-y-0.5">
+                      {guis.length === 0 ? (
+                        <div className="text-[10px] text-slate-500 italic py-0.5">
+                          Nenhum ScreenGui criado. Clique em + para criar.
+                        </div>
+                      ) : (
+                        guis.map(gui => (
+                          <div
+                            key={gui.id}
+                            className="flex items-center justify-between px-2 py-1 text-[11px] text-cyan-200 rounded bg-cyan-950/20 border border-cyan-800/30 font-mono"
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <Box className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
+                              <span className="truncate">{gui.name}</span>
+                            </div>
+                            <span className="text-[9px] text-cyan-400/80 font-mono">{gui.className}</span>
+                          </div>
+                        ))
+                      )}
                     </div>
                   )}
                 </div>
@@ -2529,6 +2629,155 @@ print("Script Global do Workspace em execução!")
                       )}
                     </div>
 
+                    {/* Roblox Instance: Textures & Decals */}
+                    <div className="bg-[#111216] border border-[#2b2f3c] rounded-xl p-2.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wide flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                          Textures & Decals ({selectedPart.textures?.length || 0})
+                        </span>
+                      </div>
+
+                      {/* Attached Textures List */}
+                      {selectedPart.textures && selectedPart.textures.length > 0 && (
+                        <div className="space-y-1">
+                          {selectedPart.textures.map(t => (
+                            <div key={t.id} className="flex items-center justify-between p-1.5 bg-[#191b24] rounded-lg border border-[#2b2f3c] text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-amber-300 font-bold">{t.name}</span>
+                                <span className="bg-[#242838] text-slate-300 px-1.5 py-0.5 rounded text-[9px] font-mono">Face: {t.face}</span>
+                              </div>
+                              <button
+                                onClick={() => handleRemoveTextureFromPart(selectedPart.id, t.id)}
+                                className="text-slate-500 hover:text-rose-400 p-0.5"
+                                title="Remover Texture"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Quick Add Texture Presets */}
+                      <div className="space-y-1.5 pt-1 border-t border-[#232634]">
+                        <span className="text-[10px] text-slate-400 block">+ Adicionar Face Texture:</span>
+                        <div className="grid grid-cols-3 gap-1">
+                          {['studs', 'welds', 'hazard', 'brick', 'wood', 'checker'].map(preset => (
+                            <button
+                              key={preset}
+                              onClick={() => handleAddTextureToPart(selectedPart.id, preset, 'Top')}
+                              className="px-2 py-1 bg-[#1a1c26] hover:bg-amber-950/40 hover:border-amber-500/50 text-slate-200 hover:text-amber-300 border border-[#2b2f3c] rounded text-[10px] font-mono capitalize transition-colors"
+                            >
+                              +{preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Roblox Instance: WeldConstraints */}
+                    <div className="bg-[#111216] border border-[#2b2f3c] rounded-xl p-2.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-cyan-300 uppercase tracking-wide flex items-center gap-1.5">
+                          <Anchor className="w-3.5 h-3.5 text-cyan-400" />
+                          WeldConstraints ({selectedPart.weldConstraints?.length || 0})
+                        </span>
+                      </div>
+
+                      {/* Attached Welds List */}
+                      {selectedPart.weldConstraints && selectedPart.weldConstraints.length > 0 && (
+                        <div className="space-y-1">
+                          {selectedPart.weldConstraints.map(w => {
+                            const p1 = parts.find(p => p.id === w.part1Id);
+                            return (
+                              <div key={w.id} className="flex items-center justify-between p-1.5 bg-[#191b24] rounded-lg border border-[#2b2f3c] text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-cyan-300 font-bold">{w.name}</span>
+                                  <span className="text-slate-400 text-[10px]">→ {p1?.name || 'Part'}</span>
+                                </div>
+                                <button
+                                  onClick={() => handleRemoveWeldConstraint(selectedPart.id, w.id)}
+                                  className="text-slate-500 hover:text-rose-400 p-0.5"
+                                  title="Remover WeldConstraint"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Add Weld Form */}
+                      {parts.filter(p => p.id !== selectedPart.id).length > 0 && (
+                        <div className="pt-1 border-t border-[#232634] flex items-center gap-1.5">
+                          <select
+                            id="weld-target-select"
+                            className="flex-1 bg-[#181a24] border border-[#2b2f3c] rounded px-2 py-1 text-white text-[10px]"
+                            defaultValue=""
+                          >
+                            <option value="" disabled>Soldar com outra peça...</option>
+                            {parts.filter(p => p.id !== selectedPart.id).map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => {
+                              const sel = document.getElementById('weld-target-select') as HTMLSelectElement;
+                              if (sel && sel.value) {
+                                handleAddWeldConstraint(selectedPart.id, sel.value);
+                                sel.value = '';
+                              }
+                            }}
+                            className="px-2 py-1 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-200 border border-cyan-500/40 rounded text-[10px] font-bold shrink-0"
+                          >
+                            + Weld
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Roblox Instance: BillboardGui */}
+                    <div className="bg-[#111216] border border-[#2b2f3c] rounded-xl p-2.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wide flex items-center gap-1.5">
+                          <Box className="w-3.5 h-3.5 text-emerald-400" />
+                          BillboardGui 3D ({selectedPart.guis?.length || 0})
+                        </span>
+                        <button
+                          onClick={() => handleAddBillboardGui(selectedPart.id, selectedPart.label || 'Player Badge')}
+                          className="flex items-center gap-1 text-[10px] bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded font-semibold transition-colors"
+                        >
+                          <Plus className="w-3 h-3" />
+                          + BillboardGui
+                        </button>
+                      </div>
+
+                      {selectedPart.guis && selectedPart.guis.length > 0 && (
+                        <div className="space-y-1">
+                          {selectedPart.guis.map(g => (
+                            <div key={g.id} className="flex items-center justify-between p-1.5 bg-[#191b24] rounded-lg border border-[#2b2f3c] text-[11px]">
+                              <span className="font-mono text-emerald-300 font-bold">&quot;{g.text}&quot;</span>
+                              <button
+                                onClick={() => {
+                                  sounds.playClick();
+                                  setParts(prev => prev.map(p => {
+                                    if (p.id !== selectedPart.id) return p;
+                                    return { ...p, guis: (p.guis || []).filter(item => item.id !== g.id) };
+                                  }));
+                                }}
+                                className="text-slate-500 hover:text-rose-400 p-0.5"
+                                title="Remover BillboardGui"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Floating Sign / Text Label */}
                     <div>
                       <label className="text-[11px] text-slate-400 block mb-1">Floating Sign Label</label>
@@ -2590,17 +2839,16 @@ print("Script Global do Workspace em execução!")
             <span className="text-[10px]">Inserir</span>
           </button>
 
-          {/* 3. Ferramenta Ativa (Select / Move / Scale) */}
+          {/* 3. Ferramenta Ativa (Move / Scale) */}
           <button
             onClick={() => {
               sounds.playClick();
-              setActiveTool(prev => prev === 'select' ? 'move' : prev === 'move' ? 'scale' : 'select');
+              setActiveTool(prev => prev === 'move' ? 'scale' : 'move');
             }}
             className="flex flex-col items-center gap-1 py-1 px-2.5 rounded-xl text-slate-300 active:scale-95 transition-transform cursor-pointer"
-            title="Alternar Ferramenta: Selecionar, Mover ou Escalar"
+            title="Alternar Ferramenta: Mover ou Escalar"
           >
-            {activeTool === 'select' ? <Box className="w-5 h-5 text-[#00a2ff]" /> :
-             activeTool === 'move' ? <Move className="w-5 h-5 text-amber-400" /> :
+            {activeTool === 'move' ? <Move className="w-5 h-5 text-amber-400" /> :
              <Maximize className="w-5 h-5 text-emerald-400" />}
             <span className="text-[10px] capitalize">{activeTool}</span>
           </button>

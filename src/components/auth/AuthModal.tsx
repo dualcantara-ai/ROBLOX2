@@ -193,15 +193,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       <header className="relative z-30 w-full max-w-5xl px-4 pt-6 pb-2 flex items-center justify-between gap-4">
         {/* Brand Lockup */}
         <div className="flex items-center gap-2.5">
-          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center transform -rotate-12 shadow-xl shrink-0">
-            <div className="w-3.5 h-3.5 bg-[#07080b] rounded-[3px] transform rotate-12" />
+          <div className="w-10 h-10 bg-black border border-white/30 rounded-xl flex items-center justify-center transform -rotate-12 shadow-xl shrink-0">
+            <div className="w-3.5 h-3.5 bg-[#111216] rounded-[3px] transform rotate-12" />
           </div>
           <div className="flex flex-col">
             <span className="text-2xl sm:text-3xl font-black text-white tracking-wider font-sans leading-none drop-shadow-md">
-              ROBLOX
+              BASEHUB
             </span>
             <span className="text-[9px] font-bold text-slate-400 tracking-widest uppercase">
-              BloxVerse Edition
+              Universe Edition
             </span>
           </div>
         </div>
