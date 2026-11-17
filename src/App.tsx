@@ -57,6 +57,7 @@ export default function App() {
 
   // Navigation
   const [activeTab, setActiveTab] = useState<'discover' | 'studio' | 'shop' | 'avatar' | 'social'>('discover');
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   
   // Game Play & Edit State
   const [activeGame, setActiveGame] = useState<GameMetadata | null>(null);
@@ -322,6 +323,7 @@ export default function App() {
         onOpenAuthModal={handleOpenEmailAuth}
         onGuestActionBlocked={handleGuestActionBlocked}
         onLogout={handleLogout}
+        onToggleSidebar={() => setIsSidebarOpen(prev => !prev)}
       />
 
       {/* Main Content Area with Left Sidebar (Screenshot 1 Layout) */}
@@ -329,6 +331,9 @@ export default function App() {
         {activeTab !== 'studio' && (
           <LeftSidebar
             activeTab={activeTab}
+            isOpen={isSidebarOpen}
+            onClose={() => setIsSidebarOpen(false)}
+            onOpenEconomy={() => setIsEconomyOpen(true)}
             onSelectTab={(tab) => {
               if (tab === 'studio' && user.isGuest) {
                 handleGuestActionBlocked('studio');

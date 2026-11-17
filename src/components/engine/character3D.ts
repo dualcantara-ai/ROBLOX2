@@ -384,6 +384,13 @@ function createRobloxShirtTexture(baseHex: string, shirtId?: string): THREE.Canv
     ctx.beginPath();
     ctx.moveTo(128, 40); ctx.lineTo(128, 256);
     ctx.stroke();
+  } else if (shirtId === 'rig-plain') {
+    // Pure plastic Rig torso (Roblox Studio Rig / Dummy style)
+    ctx.fillStyle = baseHex;
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(3, 3, 250, 250);
   } else {
     // Classic Crew Neck T-Shirt / BloxVerse Tee
     // Collar ribbing
@@ -434,6 +441,13 @@ function createRobloxPantsTexture(baseHex: string, pantsId?: string): THREE.Canv
 
   ctx.fillStyle = baseHex;
   ctx.fillRect(0, 0, 256, 256);
+
+  if (pantsId === 'rig-plain') {
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(3, 3, 250, 250);
+    return new THREE.CanvasTexture(canvas);
+  }
 
   // Top Belt
   ctx.fillStyle = '#1e293b';
@@ -487,6 +501,7 @@ export function createBlockyCharacter(appearance: AvatarAppearance): CharacterMe
   // TORSO (2 x 2 x 1 studs) - Curved beveled edges
   const torsoTex = createRobloxShirtTexture(appearance.bodyColors.torso, appearance.equippedShirt);
   const torsoMat = createPlasticMat(appearance.bodyColors.torso, torsoTex);
+  let currentTorsoTex = torsoTex;
   const torsoGeo = new RoundedBoxGeometry(2, 2, 1, 3, 0.08);
   const torso = new THREE.Mesh(torsoGeo, torsoMat);
   torso.castShadow = true;
@@ -792,6 +807,8 @@ export function createBlockyCharacter(appearance: AvatarAppearance): CharacterMe
 
   const pantsTex = createRobloxPantsTexture(appearance.bodyColors.leftLeg, appearance.equippedPants);
   const legMat = createPlasticMat(appearance.bodyColors.leftLeg, pantsTex);
+  let currentPantsTex = pantsTex;
+  let currentFaceId = appearance.equippedFace;
   const legGeo = new RoundedBoxGeometry(1, 2, 1, 3, 0.08);
 
   const leftLegMesh = new THREE.Mesh(legGeo, legMat);
@@ -870,7 +887,7 @@ export function createBlockyCharacter(appearance: AvatarAppearance): CharacterMe
     if (damaged !== lastWasDamaged) {
       lastWasDamaged = damaged;
       faceTex.dispose();
-      faceTex = createRobloxFaceTexture(appearance.equippedFace, damaged);
+      faceTex = createRobloxFaceTexture(currentFaceId, damaged);
       faceMat.map = faceTex;
       faceMat.needsUpdate = true;
     }
@@ -1021,14 +1038,14 @@ export function createBlockyCharacter(appearance: AvatarAppearance): CharacterMe
   };
 
   const updateAppearance = (newApp: AvatarAppearance) => {
-    torsoTex.dispose();
-    const newTorsoTex = createRobloxShirtTexture(newApp.bodyColors.torso, newApp.equippedShirt);
-    (torsoMat as THREE.MeshStandardMaterial).map = newTorsoTex;
+    currentTorsoTex.dispose();
+    currentTorsoTex = createRobloxShirtTexture(newApp.bodyColors.torso, newApp.equippedShirt);
+    (torsoMat as THREE.MeshStandardMaterial).map = currentTorsoTex;
     (torsoMat as THREE.MeshStandardMaterial).needsUpdate = true;
 
-    pantsTex.dispose();
-    const newPantsTex = createRobloxPantsTexture(newApp.bodyColors.leftLeg, newApp.equippedPants);
-    (legMat as THREE.MeshStandardMaterial).map = newPantsTex;
+    currentPantsTex.dispose();
+    currentPantsTex = createRobloxPantsTexture(newApp.bodyColors.leftLeg, newApp.equippedPants);
+    (legMat as THREE.MeshStandardMaterial).map = currentPantsTex;
     (legMat as THREE.MeshStandardMaterial).needsUpdate = true;
 
     (headMat as THREE.MeshStandardMaterial).color.set(newApp.bodyColors.head);
@@ -1037,13 +1054,20 @@ export function createBlockyCharacter(appearance: AvatarAppearance): CharacterMe
     (leftArmMat as THREE.MeshStandardMaterial).color.set(newApp.bodyColors.leftArm);
     (rightArmMat as THREE.MeshStandardMaterial).color.set(newApp.bodyColors.rightArm);
 
+    currentFaceId = newApp.equippedFace;
     faceTex.dispose();
-    faceTex = createRobloxFaceTexture(newApp.equippedFace, false);
+    faceTex = createRobloxFaceTexture(newApp.equippedFace, lastWasDamaged);
     faceMat.map = faceTex;
     faceMat.needsUpdate = true;
 
     buildHat(newApp.equippedHat);
     buildGear(newApp.equippedGear);
+
+    root.scale.set(
+      newApp.scale?.width || 1,
+      newApp.scale?.height || 1,
+      newApp.scale?.width || 1
+    );
   };
 
   const getPlayerColliderBoxes = () => {

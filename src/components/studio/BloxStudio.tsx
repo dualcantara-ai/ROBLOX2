@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Play, 
   Square, 
@@ -47,16 +47,26 @@ import {
   Smartphone,
   Pencil,
   Bot,
-  Terminal
+  Terminal,
+  Undo2,
+  Redo2,
+  Keyboard,
+  Swords
 } from 'lucide-react';
 import { BloxPart, PartType, MaterialType, BloxVector3, GameMetadata, AvatarAppearance, PlayerBodyPart, BloxTexture, BloxWeldConstraint, BloxTool, BloxGuiElement, NormalId } from '../../types';
 import { BloxEngine3D } from '../engine/BloxEngine3D';
 import { sounds } from '../../services/soundEffects';
 import { getPlayerPartsList } from '../engine/character3D';
 import { ScriptEditorModal } from './ScriptEditorModal';
-import { BloxCopilot } from './BloxCopilot';
+import { ZephyrAI } from './BloxCopilot';
 import { LuauScriptInstance } from '../../services/luau/types';
 import { luauEngine } from '../../services/luau/luauRuntime';
+import {
+  RIG_CHASE_ATTACK_TEMPLATE,
+  RIG_DROP_COIN_ON_DEATH_TEMPLATE,
+  RIG_SPAWN_PART_ON_DEATH_TEMPLATE
+} from '../../services/luau/luauTemplates';
+import { RobloxStudioLogo, RobuxIcon } from '../common/RobloxIcons';
 
 interface BloxStudioProps {
   onPublishGame: (game: GameMetadata) => void;
@@ -373,6 +383,61 @@ print("✨ Desenvolvedor:", "${username || 'BloxMaster'}")
   const [workspaceExpanded, setWorkspaceExpanded] = useState<boolean>(true);
   const [playersExpanded, setPlayersExpanded] = useState<boolean>(true);
   const [showPublishModal, setShowPublishModal] = useState<boolean>(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
+  const [copiedPart, setCopiedPart] = useState<BloxPart | null>(null);
+  const [shortcutToast, setShortcutToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  // Undo / Redo History Stack for parts
+  const pastRef = useRef<BloxPart[][]>([]);
+  const futureRef = useRef<BloxPart[][]>([]);
+  const committedPartsRef = useRef<BloxPart[]>(parts);
+  const isUndoRedoRef = useRef<boolean>(false);
+  const lastHistoryPushTimeRef = useRef<number>(0);
+  const [canUndo, setCanUndo] = useState<boolean>(false);
+  const [canRedo, setCanRedo] = useState<boolean>(false);
+
+  const triggerShortcutToast = useCallback((message: string) => {
+    setShortcutToast(message);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setShortcutToast(null);
+    }, 1800);
+  }, []);
+
+  useEffect(() => {
+    if (isUndoRedoRef.current) {
+      isUndoRedoRef.current = false;
+      committedPartsRef.current = parts;
+      return;
+    }
+    if (committedPartsRef.current === parts) return;
+
+    const now = Date.now();
+    const isRapidSameCountEdit =
+      parts.length === committedPartsRef.current.length &&
+      now - lastHistoryPushTimeRef.current < 250 &&
+      pastRef.current.length > 0;
+
+    if (!isRapidSameCountEdit) {
+      pastRef.current = [...pastRef.current.slice(-49), committedPartsRef.current];
+      futureRef.current = [];
+      lastHistoryPushTimeRef.current = now;
+    }
+    committedPartsRef.current = parts;
+    setCanUndo(pastRef.current.length > 0);
+    setCanRedo(futureRef.current.length > 0);
+  }, [parts]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   // Tools & GUIs state
   const [tools, setTools] = useState<BloxTool[]>(() => initialGame?.tools || []);
@@ -491,6 +556,11 @@ print("✨ Desenvolvedor:", "${username || 'BloxMaster'}")
   useEffect(() => {
     if (initialGame) {
       if (initialGame.parts && initialGame.parts.length > 0) {
+        isUndoRedoRef.current = true;
+        pastRef.current = [];
+        futureRef.current = [];
+        setCanUndo(false);
+        setCanRedo(false);
         setParts(initialGame.parts);
       }
       if (initialGame.spawnPoint) {
@@ -515,6 +585,22 @@ print("✨ Desenvolvedor:", "${username || 'BloxMaster'}")
     setSelectedPlayerPartId(null);
   }, []);
 
+  const handleUpdatePart = useCallback((partId: string, partial: Partial<BloxPart>) => {
+    setParts(prev => prev.map(p => {
+      if (p.id === partId) {
+        const next = { ...p, ...partial };
+        if (partial.isAnchored !== undefined) next.anchored = partial.isAnchored;
+        if (partial.anchored !== undefined) next.isAnchored = partial.anchored;
+        return next;
+      }
+      return p;
+    }));
+  }, []);
+
+  const handleTransformPart = useCallback((partId: string, newPosition: BloxVector3) => {
+    handleUpdatePart(partId, { position: newPosition });
+  }, [handleUpdatePart]);
+
   // Universal Fullscreen Toggle (supports both container full-viewport and real browser fullscreen)
   const handleToggleFullscreen = () => {
     sounds.playClick();
@@ -534,8 +620,8 @@ print("✨ Desenvolvedor:", "${username || 'BloxMaster'}")
   };
 
   // Publish Form State (pre-filled with initialGame when in Edit mode)
-  const [publishTitle, setPublishTitle] = useState<string>(() => initialGame ? initialGame.title : 'My Awesome Obby');
-  const [publishDesc, setPublishDesc] = useState<string>(() => initialGame ? initialGame.description : 'Built in BloxVerse Studio! Can you beat the parkour jumps?');
+  const [publishTitle, setPublishTitle] = useState<string>(() => initialGame ? initialGame.title : 'Meu Obby Clássico');
+  const [publishDesc, setPublishDesc] = useState<string>(() => initialGame ? initialGame.description : 'Criado com Roblox Studio 2022! Você consegue chegar até o final e zerar este percurso?');
   const [publishGenre, setPublishGenre] = useState<GameMetadata['genre']>(() => initialGame ? initialGame.genre : 'Obby / Parkour');
   const [publishPrice, setPublishPrice] = useState<number>(() => initialGame ? (initialGame.price || 0) : 0);
 
@@ -553,11 +639,12 @@ print("✨ Desenvolvedor:", "${username || 'BloxMaster'}")
   const handleCreateNewScript = (parentPartId: string = 'Workspace', name?: string, source?: string) => {
     sounds.playClick();
     const targetPart = parts.find(p => p.id === parentPartId);
+    const isTargetRig = targetPart && (targetPart.type === 'rig' || targetPart.type === 'npc');
     const newScript: LuauScriptInstance = {
       id: `script-${Date.now()}`,
-      name: name || (targetPart ? `${targetPart.name}Script` : 'NewScript'),
+      name: name || (isTargetRig ? `${targetPart.name}ChaseAI` : targetPart ? `${targetPart.name}Script` : 'NewScript'),
       className: 'Script',
-      source: source || (targetPart ? `-- Script da peça: ${targetPart.name}
+      source: source || (isTargetRig ? RIG_CHASE_ATTACK_TEMPLATE : targetPart ? `-- Script da peça: ${targetPart.name}
 local part = script.Parent
 
 print("Script inicializado na peça:", part.Name)
@@ -576,6 +663,101 @@ print("Script Global do Workspace em execução!")
     setScripts(prev => [...prev, newScript]);
     setActiveEditingScript(newScript);
     setIsScriptEditorOpen(true);
+  };
+
+  const handleAttachChaseScriptToRig = (rigId: string, openEditor: boolean = false) => {
+    sounds.playClick();
+    const rigPart = parts.find(p => p.id === rigId);
+    if (!rigPart) return;
+    const newScript: LuauScriptInstance = {
+      id: `script-rig-${Date.now()}`,
+      name: `${rigPart.name}ChaseAI`,
+      className: 'Script',
+      source: RIG_CHASE_ATTACK_TEMPLATE,
+      enabled: true,
+      parentPartId: rigId,
+      createdAt: new Date().toISOString()
+    };
+    setScripts(prev => [...prev, newScript]);
+    triggerShortcutToast(`⚔️ Script "Perseguir & Atacar" colocado em ${rigPart.name}!`);
+    if (openEditor) {
+      setActiveEditingScript(newScript);
+      setIsScriptEditorOpen(true);
+    }
+  };
+
+  const handleAttachDeathScriptToRig = (rigId: string, mode: 'coin' | 'part', openEditor: boolean = false) => {
+    sounds.playClick();
+    const rigPart = parts.find(p => p.id === rigId);
+    if (!rigPart) return;
+    const isCoin = mode === 'coin';
+    const newScript: LuauScriptInstance = {
+      id: `script-rig-death-${mode}-${Date.now()}`,
+      name: isCoin ? `${rigPart.name}DropCoinOnDeath` : `${rigPart.name}SpawnPartOnDeath`,
+      className: 'Script',
+      source: isCoin ? RIG_DROP_COIN_ON_DEATH_TEMPLATE : RIG_SPAWN_PART_ON_DEATH_TEMPLATE,
+      enabled: true,
+      parentPartId: rigId,
+      createdAt: new Date().toISOString()
+    };
+    setScripts(prev => [...prev, newScript]);
+    triggerShortcutToast(
+      isCoin
+        ? `🪙 Script "Ao Morrer: Dropar Moeda" colocado em ${rigPart.name}!`
+        : `📦 Script "Ao Morrer: Criar Parte" colocado em ${rigPart.name}!`
+    );
+    if (openEditor) {
+      setActiveEditingScript(newScript);
+      setIsScriptEditorOpen(true);
+    }
+  };
+
+  const handleAddEnemyRig = () => {
+    sounds.playClick();
+    const newId = `part-${Date.now()}`;
+    const baseZ = selectedPart ? selectedPart.position.z - 6 : -8;
+    const newRig: BloxPart = {
+      id: newId,
+      name: 'Rig Inimigo',
+      className: 'Rig',
+      type: 'rig',
+      position: { x: 0, y: 2.75, z: baseZ },
+      size: { x: 4, y: 5.5, z: 2 },
+      rotation: { x: 0, y: 0, z: 0 },
+      color: '#dc2626',
+      material: 'plastic',
+      anchored: true,
+      isAnchored: true,
+      canCollide: true,
+      transparency: 0,
+      label: 'INIMIGO',
+      attributes: {
+        MaxHealth: 100,
+        WalkSpeed: 12,
+        JumpPower: 50,
+        StarterCharacter: false,
+        RigHeadColor: '#fca5a5',
+        RigTorsoColor: '#dc2626',
+        RigArmColor: '#ef4444',
+        RigLegColor: '#1e293b',
+        RigFace: 'face-beast',
+        RigType: 'R6'
+      }
+    };
+    const chaseScript: LuauScriptInstance = {
+      id: `script-rig-${Date.now() + 1}`,
+      name: 'RigChaseAI',
+      className: 'Script',
+      source: RIG_CHASE_ATTACK_TEMPLATE,
+      enabled: true,
+      parentPartId: newId,
+      createdAt: new Date().toISOString()
+    };
+    setParts(prev => [...prev, newRig]);
+    setScripts(prev => [...prev, chaseScript]);
+    setSelectedPartId(newId);
+    setSelectedPlayerPartId(null);
+    triggerShortcutToast('⚔️ Rig Inimigo com Script Perseguidor inserido!');
   };
 
   const handleSaveScript = (updated: LuauScriptInstance) => {
@@ -844,6 +1026,36 @@ print("Script Global do Workspace em execução!")
           transparency: 0
         };
         break;
+      case 'rig':
+      case 'npc':
+        newPart = {
+          id: newId,
+          name: 'Rig',
+          className: 'Rig',
+          type: 'rig',
+          position: { x: 0, y: 2.75, z: baseZ },
+          size: { x: 4, y: 5.5, z: 2 },
+          rotation: { x: 0, y: 0, z: 0 },
+          color: '#0284c7',
+          material: 'plastic',
+          anchored: true,
+          isAnchored: true,
+          canCollide: true,
+          transparency: 0,
+          attributes: {
+            MaxHealth: 100,
+            WalkSpeed: 16,
+            JumpPower: 50,
+            StarterCharacter: false,
+            RigHeadColor: '#facc15',
+            RigTorsoColor: '#0284c7',
+            RigArmColor: '#facc15',
+            RigLegColor: '#1e293b',
+            RigFace: 'face-smile',
+            RigType: 'R6'
+          }
+        };
+        break;
       default:
         newPart = {
           id: newId,
@@ -876,7 +1088,36 @@ print("Script Global do Workspace em execução!")
         const next = { ...p, ...updates };
         if (updates.isAnchored !== undefined) next.anchored = updates.isAnchored;
         if (updates.anchored !== undefined) next.isAnchored = updates.anchored;
+        if ((p.type === 'rig' || p.type === 'npc') && updates.color && !updates.attributes) {
+          next.attributes = { ...(p.attributes || {}), RigTorsoColor: updates.color };
+        }
         return next;
+      }
+      return p;
+    }));
+  };
+
+  // Toggle StarterCharacter on a Rig (only one Rig can be active as player spawn character at a time)
+  const handleToggleStarterCharacter = (rigId: string, enabled: boolean) => {
+    sounds.playClick();
+    setParts(prev => prev.map(p => {
+      if (p.id === rigId) {
+        return {
+          ...p,
+          attributes: {
+            ...(p.attributes || {}),
+            StarterCharacter: enabled
+          }
+        };
+      }
+      if (enabled && (p.type === 'rig' || p.type === 'npc') && p.attributes?.StarterCharacter) {
+        return {
+          ...p,
+          attributes: {
+            ...(p.attributes || {}),
+            StarterCharacter: false
+          }
+        };
       }
       return p;
     }));
@@ -936,14 +1177,78 @@ print("Script Global do Workspace em execução!")
     };
     setParts(prev => [...prev, newPart]);
     setSelectedPartId(newPart.id);
+    triggerShortcutToast(`📑 Duplicado: ${selectedPart.name} (Ctrl+D)`);
+  };
+
+  // Copy part to Studio clipboard
+  const handleCopyPart = () => {
+    if (!selectedPart) return;
+    sounds.playClick();
+    setCopiedPart(JSON.parse(JSON.stringify(selectedPart)));
+    triggerShortcutToast(`📋 Copiado: ${selectedPart.name} (Ctrl+C)`);
+  };
+
+  // Paste part from Studio clipboard
+  const handlePastePart = () => {
+    if (!copiedPart) return;
+    sounds.playClick();
+    const pasted: BloxPart = {
+      ...JSON.parse(JSON.stringify(copiedPart)),
+      id: `part-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: `${copiedPart.name} (Paste)`,
+      position: {
+        x: copiedPart.position.x + 2,
+        y: copiedPart.position.y,
+        z: copiedPart.position.z
+      }
+    };
+    setParts(prev => [...prev, pasted]);
+    setSelectedPartId(pasted.id);
+    setSelectedPlayerPartId(null);
+    triggerShortcutToast(`📌 Colado: ${copiedPart.name} (Ctrl+V)`);
+  };
+
+  // Undo & Redo handlers
+  const handleUndo = () => {
+    if (pastRef.current.length === 0) return;
+    sounds.playClick();
+    const previous = pastRef.current[pastRef.current.length - 1];
+    pastRef.current = pastRef.current.slice(0, -1);
+    futureRef.current = [parts, ...futureRef.current.slice(0, 49)];
+    isUndoRedoRef.current = true;
+    setParts(previous);
+    if (selectedPartId && !previous.some(p => p.id === selectedPartId)) {
+      setSelectedPartId(null);
+    }
+    setCanUndo(pastRef.current.length > 0);
+    setCanRedo(futureRef.current.length > 0);
+    triggerShortcutToast('↩️ Desfeito (Ctrl+Z)');
+  };
+
+  const handleRedo = () => {
+    if (futureRef.current.length === 0) return;
+    sounds.playClick();
+    const next = futureRef.current[0];
+    futureRef.current = futureRef.current.slice(1);
+    pastRef.current = [...pastRef.current.slice(-49), parts];
+    isUndoRedoRef.current = true;
+    setParts(next);
+    if (selectedPartId && !next.some(p => p.id === selectedPartId)) {
+      setSelectedPartId(null);
+    }
+    setCanUndo(pastRef.current.length > 0);
+    setCanRedo(futureRef.current.length > 0);
+    triggerShortcutToast('↪️ Refeito (Ctrl+Y)');
   };
 
   // Delete part
   const handleDelete = () => {
     if (!selectedPartId) return;
     sounds.playClick();
+    const deletedName = selectedPart?.name || 'Peça';
     setParts(prev => prev.filter(p => p.id !== selectedPartId));
     setSelectedPartId(null);
+    triggerShortcutToast(`🗑️ Excluído: ${deletedName} (Del)`);
   };
 
   // Publish / Save Experience
@@ -980,6 +1285,270 @@ print("Script Global do Workspace em execução!")
     setShowPublishModal(false);
   };
 
+  // Keep latest handlers in a ref so the global keyboard listener never suffers from stale closures
+  const shortcutHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  shortcutHandlerRef.current = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    const isInput =
+      !!target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable);
+
+    const key = e.key.toLowerCase();
+    const mod = e.ctrlKey || e.metaKey;
+
+    if (e.key === 'Escape') {
+      if (showShortcutsModal) {
+        e.preventDefault();
+        setShowShortcutsModal(false);
+        return;
+      }
+      if (showPublishModal) {
+        e.preventDefault();
+        setShowPublishModal(false);
+        return;
+      }
+      if (isScriptEditorOpen) {
+        e.preventDefault();
+        setIsScriptEditorOpen(false);
+        return;
+      }
+      if (isCopilotOpen) {
+        e.preventDefault();
+        setIsCopilotOpen(false);
+        return;
+      }
+      if (isInput) {
+        target?.blur();
+        return;
+      }
+      if (isTesting) {
+        e.preventDefault();
+        sounds.playClick();
+        setIsTesting(false);
+        triggerShortcutToast('⏹️ Playtest parado (Esc)');
+        return;
+      }
+      if (selectedPartId || selectedPlayerPartId) {
+        e.preventDefault();
+        setSelectedPartId(null);
+        setSelectedPlayerPartId(null);
+        triggerShortcutToast('Seleção limpa (Esc)');
+      }
+      return;
+    }
+
+    if (isInput) return;
+
+    // F1 or ? -> Toggle Keyboard Shortcuts Help
+    if (e.key === 'F1' || (e.key === '?' && !mod && !e.altKey && !isTesting && !isScriptEditorOpen)) {
+      e.preventDefault();
+      sounds.playClick();
+      setShowShortcutsModal(prev => !prev);
+      return;
+    }
+
+    // F5 -> Play / Stop Playtest
+    if (e.key === 'F5') {
+      e.preventDefault();
+      if (isScriptEditorOpen || showPublishModal || showShortcutsModal) return;
+      sounds.playClick();
+      if (isTesting) {
+        setIsTesting(false);
+        triggerShortcutToast('⏹️ Playtest parado (F5)');
+      } else {
+        setSelectedPartId(null);
+        setSelectedPlayerPartId(null);
+        setIsTesting(true);
+        triggerShortcutToast('▶️ Playtest iniciado (F5)');
+      }
+      return;
+    }
+
+    // F8 -> Toggle Run Physics
+    if (e.key === 'F8') {
+      e.preventDefault();
+      if (isTesting || isScriptEditorOpen || showPublishModal || showShortcutsModal) return;
+      sounds.playClick();
+      setIsPhysicsRunning(prev => {
+        const next = !prev;
+        triggerShortcutToast(next ? '⚡ Física em execução (F8)' : '⏸️ Física pausada (F8)');
+        return next;
+      });
+      return;
+    }
+
+    // F11 -> Toggle Fullscreen
+    if (e.key === 'F11') {
+      e.preventDefault();
+      handleToggleFullscreen();
+      triggerShortcutToast('🖥️ Tela Cheia alternada (F11)');
+      return;
+    }
+
+    // Ctrl/Cmd + S -> Open Publish / Save dialog (or confirm if already open)
+    if (mod && key === 's') {
+      e.preventDefault();
+      if (showPublishModal) {
+        handlePublish();
+      } else {
+        sounds.playClick();
+        setShowPublishModal(true);
+        triggerShortcutToast(initialGame ? '💾 Salvar Jogo (Ctrl+S)' : '📤 Publicar Jogo (Ctrl+S)');
+      }
+      return;
+    }
+
+    // Do not run Studio editing shortcuts while testing or inside modals
+    if (isTesting || isScriptEditorOpen || showPublishModal || showShortcutsModal) return;
+
+    // Alt + Panel / Creation shortcuts
+    if (e.altKey && !mod) {
+      if (key === 't') {
+        e.preventDefault();
+        sounds.playClick();
+        setShowToolbox(prev => {
+          const next = !prev;
+          triggerShortcutToast(next ? '🧰 Toolbox aberto (Alt+T)' : '🧰 Toolbox fechado (Alt+T)');
+          return next;
+        });
+        return;
+      }
+      if (key === 'e') {
+        e.preventDefault();
+        sounds.playClick();
+        setShowExplorer(prev => {
+          const next = !prev;
+          triggerShortcutToast(next ? '🗂️ Explorer aberto (Alt+E)' : '🗂️ Explorer fechado (Alt+E)');
+          return next;
+        });
+        return;
+      }
+      if (key === 'z') {
+        e.preventDefault();
+        sounds.playClick();
+        setIsCopilotOpen(prev => {
+          const next = !prev;
+          triggerShortcutToast(next ? '✨ Zephyr AI aberto (Alt+Z)' : '✨ Zephyr AI fechado (Alt+Z)');
+          return next;
+        });
+        return;
+      }
+      if (key === 'n') {
+        e.preventDefault();
+        handleAddPart('block');
+        triggerShortcutToast('🧱 Nova Peça inserida (Alt+N)');
+        return;
+      }
+      if (key === 'l') {
+        e.preventDefault();
+        if (scripts.length > 0) {
+          handleOpenScript(scripts[0]);
+        } else {
+          handleCreateNewScript(selectedPartId || 'Workspace');
+        }
+        return;
+      }
+    }
+
+    // Ctrl/Cmd editing shortcuts
+    if (mod && !e.altKey) {
+      if (key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+      if (key === 'y' || (key === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+      if (key === 'd') {
+        e.preventDefault();
+        handleDuplicate();
+        return;
+      }
+      if (key === 'c') {
+        e.preventDefault();
+        handleCopyPart();
+        return;
+      }
+      if (key === 'v') {
+        e.preventDefault();
+        handlePastePart();
+        return;
+      }
+    }
+
+    // Single-key Studio editing shortcuts (no modifiers)
+    if (!mod && !e.altKey && !e.shiftKey) {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedPartId) {
+          e.preventDefault();
+          handleDelete();
+        }
+        return;
+      }
+      if (key === '1') {
+        e.preventDefault();
+        sounds.playClick();
+        setActiveTool('move');
+        triggerShortcutToast('✥ Ferramenta: Move (1)');
+        return;
+      }
+      if (key === '2') {
+        e.preventDefault();
+        sounds.playClick();
+        setActiveTool('scale');
+        triggerShortcutToast('⤢ Ferramenta: Scale (2)');
+        return;
+      }
+      if (key === 'r' && selectedPart) {
+        e.preventDefault();
+        sounds.playClick();
+        const nextY = ((selectedPart.rotation.y || 0) + 45) % 360;
+        updateSelectedPart({ rotation: { ...selectedPart.rotation, y: nextY } });
+        triggerShortcutToast(`↻ Girar Y: ${nextY}° (R)`);
+        return;
+      }
+      if (key === 't' && selectedPart) {
+        e.preventDefault();
+        sounds.playClick();
+        const nextX = ((selectedPart.rotation.x || 0) + 45) % 360;
+        updateSelectedPart({ rotation: { ...selectedPart.rotation, x: nextX } });
+        triggerShortcutToast(`↻ Inclinar X: ${nextX}° (T)`);
+        return;
+      }
+      if (key === 'g' && selectedPart) {
+        e.preventDefault();
+        sounds.playClick();
+        const nextAnchored = !(selectedPart.isAnchored ?? selectedPart.anchored);
+        updateSelectedPart({ anchored: nextAnchored, isAnchored: nextAnchored });
+        triggerShortcutToast(`⚓ Anchored: ${nextAnchored ? 'ON' : 'OFF'} (G)`);
+        return;
+      }
+      if (key === 'c' && selectedPart) {
+        e.preventDefault();
+        sounds.playClick();
+        const nextCollide = !selectedPart.canCollide;
+        updateSelectedPart({ canCollide: nextCollide });
+        triggerShortcutToast(`🧱 CanCollide: ${nextCollide ? 'ON' : 'OFF'} (C)`);
+        return;
+      }
+      if (key === 'f') {
+        triggerShortcutToast(selectedPart ? `🎯 Focado em ${selectedPart.name} (F)` : '🎯 Focado no Spawn (F)');
+      }
+    }
+  };
+
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => shortcutHandlerRef.current(e);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
+
   return (
     <div className={`flex flex-col ${isFullscreenViewport ? 'fixed inset-0 z-50 h-screen w-screen' : 'h-[calc(100vh-4rem)]'} bg-[#14151b] text-slate-200 select-none overflow-hidden`}>
       {/* Studio Top Ribbon Toolbar */}
@@ -997,12 +1566,13 @@ print("Script Global do Workspace em execução!")
             </button>
           )}
 
-          {/* Logo Badge */}
+          {/* 2022 Roblox Studio Logo Badge */}
           <div className="flex items-center gap-2 pr-2 sm:pr-3 border-r border-[#2d313f] shrink-0">
-            <div className="w-7 h-7 bg-black border border-white/30 rounded-lg flex items-center justify-center transform -rotate-12 shadow">
-              <div className="w-2 h-2 bg-[#1a1c24] rounded-[1.5px] transform rotate-12" />
+            <RobloxStudioLogo size={24} className="shrink-0" />
+            <div className="flex flex-col leading-none">
+              <span className="font-black text-sm tracking-wide text-white hidden sm:inline">Roblox Studio</span>
+              <span className="text-[9px] font-bold text-[#00a2ff] hidden sm:inline">2022 EDITION</span>
             </div>
-            <span className="font-bold text-sm tracking-wide text-white hidden sm:inline">Basehub Studio</span>
           </div>
 
           {/* Edit Mode Badge if editing an existing game */}
@@ -1025,6 +1595,7 @@ print("Script Global do Workspace em execução!")
                   setSelectedPlayerPartId(null);
                 }}
                 className="flex items-center gap-1.5 sm:gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-3 sm:px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/30 transition-all cursor-pointer active:scale-95"
+                title="Testar Jogo (F5)"
               >
                 <Play className="w-4 h-4 fill-white" />
                 Play
@@ -1039,7 +1610,7 @@ print("Script Global do Workspace em execução!")
                     ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-600/30' 
                     : 'bg-[#252836] hover:bg-[#2d3142] text-amber-300 border border-amber-600/40'
                 }`}
-                title="Simular física dinâmica em tempo real"
+                title="Simular física dinâmica em tempo real (F8)"
               >
                 <Zap className="w-3.5 h-3.5 fill-current" />
                 <span className="hidden sm:inline">{isPhysicsRunning ? 'Pause Physics' : 'Run'}</span>
@@ -1053,10 +1624,37 @@ print("Script Global do Workspace em execução!")
                 setIsTesting(false);
               }}
               className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md shadow-rose-600/30 transition-all cursor-pointer animate-pulse shrink-0 active:scale-95"
+              title="Parar Playtest (F5 / Esc)"
             >
               <Square className="w-4 h-4 fill-white" />
               Stop
             </button>
+          )}
+
+          {/* Undo / Redo */}
+          {!isTesting && (
+            <div className="flex items-center bg-[#14151b] p-1 rounded-xl border border-[#2d313f] shrink-0">
+              <button
+                onClick={handleUndo}
+                disabled={!canUndo}
+                className={`p-1.5 rounded-lg text-xs transition-colors ${
+                  canUndo ? 'text-slate-200 hover:text-white hover:bg-[#252836] cursor-pointer' : 'text-slate-600 cursor-not-allowed'
+                }`}
+                title="Desfazer (Ctrl+Z)"
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={handleRedo}
+                disabled={!canRedo}
+                className={`p-1.5 rounded-lg text-xs transition-colors ${
+                  canRedo ? 'text-slate-200 hover:text-white hover:bg-[#252836] cursor-pointer' : 'text-slate-600 cursor-not-allowed'
+                }`}
+                title="Refazer (Ctrl+Y / Ctrl+Shift+Z)"
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
 
           {/* Tools: Move, Scale */}
@@ -1066,7 +1664,7 @@ print("Script Global do Workspace em execução!")
               className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
                 activeTool === 'move' ? 'bg-[#00a2ff] text-white' : 'text-slate-400 hover:text-white'
               }`}
-              title="Transform Position"
+              title="Transform Position (1)"
             >
               <Move className="w-3.5 h-3.5" />
               <span className="hidden md:inline">Move</span>
@@ -1076,7 +1674,7 @@ print("Script Global do Workspace em execução!")
               className={`p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
                 activeTool === 'scale' ? 'bg-[#00a2ff] text-white' : 'text-slate-400 hover:text-white'
               }`}
-              title="Resize / Scale"
+              title="Resize / Scale (2)"
             >
               <Maximize className="w-3.5 h-3.5" />
               <span className="hidden md:inline">Scale</span>
@@ -1087,6 +1685,18 @@ print("Script Global do Workspace em execução!")
           {selectedPart && !isTesting && (
             <div className="flex items-center gap-1 pl-2 border-l border-[#2d313f] shrink-0">
               <button
+                onClick={() => {
+                  sounds.playClick();
+                  const nextY = ((selectedPart.rotation.y || 0) + 45) % 360;
+                  updateSelectedPart({ rotation: { ...selectedPart.rotation, y: nextY } });
+                  triggerShortcutToast(`↻ Girar Y: ${nextY}° (R)`);
+                }}
+                className="p-1.5 rounded-lg bg-[#282c38] hover:bg-[#323746] text-slate-300 hover:text-white transition-colors"
+                title="Girar +45° (R)"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+              </button>
+              <button
                 onClick={handleDuplicate}
                 className="p-1.5 rounded-lg bg-[#282c38] hover:bg-[#323746] text-slate-300 hover:text-white transition-colors"
                 title="Duplicate Part (Ctrl+D)"
@@ -1096,7 +1706,7 @@ print("Script Global do Workspace em execução!")
               <button
                 onClick={handleDelete}
                 className="p-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900 border border-rose-800/40 text-rose-300 transition-colors"
-                title="Delete Part (Del)"
+                title="Delete Part (Del / Backspace)"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -1114,7 +1724,7 @@ print("Script Global do Workspace em execução!")
                 }
               }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-200 hover:text-white bg-[#202330] hover:bg-[#282d3e] border border-blue-500/30 transition-all cursor-pointer shadow-xs"
-              title="Abrir Editor de Scripts Luau"
+              title="Abrir Editor de Scripts Luau (Alt+L)"
             >
               <FileCode className="w-3.5 h-3.5 text-blue-400" />
               <span>Script ({scripts.length})</span>
@@ -1127,13 +1737,13 @@ print("Script Global do Workspace em execução!")
               }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-md ${
                 isCopilotOpen
-                  ? 'bg-purple-600 text-white shadow-purple-600/40 ring-1 ring-purple-400'
-                  : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-600/30 active:scale-95'
+                  ? 'bg-cyan-600 text-white shadow-cyan-600/40 ring-1 ring-cyan-400'
+                  : 'bg-gradient-to-r from-cyan-600 via-sky-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-cyan-600/30 active:scale-95'
               }`}
-              title="Abrir Assistente IA Copilot (Luau & Game Builder)"
+              title="Abrir Assistente Inteligente Zephyr AI (Alt+Z)"
             >
-              <Sparkles className="w-3.5 h-3.5 text-purple-200 animate-pulse" />
-              <span>Copilot IA</span>
+              <Sparkles className="w-3.5 h-3.5 text-cyan-200 animate-pulse" />
+              <span>Zephyr AI</span>
             </button>
           </div>
 
@@ -1168,7 +1778,7 @@ print("Script Global do Workspace em execução!")
                 className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
                   showToolbox ? 'bg-[#252836] text-[#00a2ff]' : 'text-slate-400 hover:text-white'
                 }`}
-                title={showToolbox ? "Recolher Toolbox" : "Abrir Toolbox"}
+                title={showToolbox ? "Recolher Toolbox (Alt+T)" : "Abrir Toolbox (Alt+T)"}
               >
                 {showToolbox ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
                 <span className="hidden xl:inline">Toolbox</span>
@@ -1182,13 +1792,31 @@ print("Script Global do Workspace em execução!")
                 className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
                   showExplorer ? 'bg-[#252836] text-[#00a2ff]' : 'text-slate-400 hover:text-white'
                 }`}
-                title={showExplorer ? "Recolher Explorer & Propriedades" : "Abrir Explorer & Propriedades"}
+                title={showExplorer ? "Recolher Explorer & Propriedades (Alt+E)" : "Abrir Explorer & Propriedades (Alt+E)"}
               >
                 {showExplorer ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
                 <span className="hidden xl:inline">Explorer</span>
               </button>
             </div>
           )}
+
+          {/* Keyboard Shortcuts Guide Button */}
+          <button
+            onClick={() => {
+              sounds.playClick();
+              setShowShortcutsModal(prev => !prev);
+            }}
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer shrink-0 border ${
+              showShortcutsModal
+                ? 'bg-[#00a2ff] text-white border-[#00a2ff]'
+                : 'bg-[#252836] hover:bg-[#2f3447] text-slate-200 border-[#363b4e]'
+            }`}
+            title="Atalhos de Teclado do Studio (F1 ou ?)"
+          >
+            <Keyboard className="w-3.5 h-3.5 text-[#00a2ff]" />
+            <span className="hidden xl:inline">Atalhos</span>
+            <kbd className="text-[10px] font-mono bg-[#14151b] text-slate-300 px-1.5 py-0.5 rounded border border-[#2d313f]">F1</kbd>
+          </button>
 
           {/* Fullscreen / Tela Cheia Toggle (ALWAYS VISIBLE & PINNED) */}
           <button
@@ -1198,7 +1826,7 @@ print("Script Global do Workspace em execução!")
                 ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-amber-500/25 ring-2 ring-amber-400'
                 : 'bg-gradient-to-r from-[#00a2ff] to-[#0070f3] hover:from-[#38bdf8] hover:to-[#00a2ff] text-white shadow-blue-500/25 ring-1 ring-blue-400/40'
             }`}
-            title={isFullscreenViewport ? "Sair da Tela Cheia" : "Tela Cheia (Fullscreen)"}
+            title={isFullscreenViewport ? "Sair da Tela Cheia (F11)" : "Tela Cheia (F11)"}
           >
             {isFullscreenViewport ? (
               <>
@@ -1223,7 +1851,7 @@ print("Script Global do Workspace em execução!")
                 ? 'bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 shadow-amber-500/25 ring-1 ring-amber-400/50'
                 : 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 shadow-emerald-500/25'
             }`}
-            title={initialGame ? "Salvar e Atualizar Experiência" : "Publicar Experiência"}
+            title={initialGame ? "Salvar e Atualizar Experiência (Ctrl+S)" : "Publicar Experiência (Ctrl+S)"}
           >
             {initialGame ? <Save className="w-4 h-4 shrink-0" /> : <Upload className="w-4 h-4 shrink-0" />}
             <span className="hidden sm:inline">{initialGame ? 'Salvar Jogo' : 'Publish'}</span>
@@ -1263,6 +1891,43 @@ print("Script Global do Workspace em execução!")
               </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-4">
+              {/* Characters & Humanoid Rigs */}
+              <div>
+                <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                  <User className="w-3.5 h-3.5" />
+                  Characters & Rigs
+                </span>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleAddPart('rig')}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-emerald-950/30 hover:bg-emerald-900/50 border border-emerald-800/50 hover:border-emerald-400 transition-all group cursor-pointer text-left"
+                    title="Inserir Rig R6 editável (Vida, Pulo, Velocidade e Spawn do Jogador)"
+                  >
+                    <div className="w-9 h-9 rounded-lg bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <User className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-xs font-bold text-emerald-200 block">Rig (Personagem R6)</span>
+                      <span className="text-[10px] text-emerald-400/80 block truncate">Vida, Pulo, Velocidade & Spawn</span>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={handleAddEnemyRig}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-rose-950/30 hover:bg-rose-900/50 border border-rose-800/50 hover:border-rose-400 transition-all group cursor-pointer text-left"
+                    title="Inserir Rig com Script Luau de perseguir e atacar jogadores"
+                  >
+                    <div className="w-9 h-9 rounded-lg bg-rose-500/20 border border-rose-400/30 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <Swords className="w-5 h-5 text-rose-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-xs font-bold text-rose-200 block">Rig Inimigo (IA Perseguidor)</span>
+                      <span className="text-[10px] text-rose-400/80 block truncate">Já vem com Script de Ataque</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               {/* Dynamic Physics & Instance Attributes section */}
               <div>
                 <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1.5 mb-2">
@@ -1425,6 +2090,8 @@ print("Script Global do Workspace em execução!")
             isPhysicsRunning={isPhysicsRunning}
             selectedPartId={selectedPartId}
             onSelectPart={handleSelectPart}
+            onUpdatePart={handleUpdatePart}
+            onTransformPart={handleTransformPart}
             showMobileControls={isTesting}
             scripts={scripts}
             tools={tools}
@@ -1585,7 +2252,7 @@ print("Script Global do Workspace em execução!")
               ) : (
                 <>
                   <span className="text-[11px] text-slate-400 hidden sm:inline">
-                    Left-drag to rotate • Wheel to zoom • Click part to select • Use [<span className="text-[#00a2ff]">◀</span> <span className="text-[#00a2ff]">▶</span>] to expand viewport
+                    WASD/QE voar • <span className="text-[#00a2ff] font-semibold">F</span> focar • <span className="text-[#00a2ff] font-semibold">R</span> girar • <span className="text-[#00a2ff] font-semibold">G</span> ancorar • <span className="text-emerald-400 font-semibold">F5</span> Play • <span className="text-amber-300 font-semibold">F1</span> Atalhos
                   </span>
                   <span className="text-[11px] text-slate-400 sm:hidden">
                     📱 1 dedo: girar • Pinça: zoom • Toque na peça para editar
@@ -1594,6 +2261,13 @@ print("Script Global do Workspace em execução!")
               )}
             </div>
           </div>
+
+          {/* Shortcut Action Feedback Toast */}
+          {shortcutToast && (
+            <div className="absolute bottom-16 lg:bottom-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-[#181a24]/95 border border-[#00a2ff]/60 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150">
+              {shortcutToast}
+            </div>
+          )}
         </div>
 
         {/* Right Column: Scene Explorer & Properties Inspector */}
@@ -1730,11 +2404,22 @@ print("Script Global do Workspace em execução!")
                               }`}
                             >
                               <div className="flex items-center gap-1.5 truncate">
-                                <div 
-                                  className="w-2.5 h-2.5 rounded-sm border border-white/20 shrink-0"
-                                  style={{ backgroundColor: part.color }}
-                                />
+                                {(part.type === 'rig' || part.type === 'npc') ? (
+                                  <User className={`w-3 h-3 shrink-0 ${part.attributes?.StarterCharacter ? 'text-emerald-400' : 'text-amber-400'}`} />
+                                ) : (
+                                  <div 
+                                    className="w-2.5 h-2.5 rounded-sm border border-white/20 shrink-0"
+                                    style={{ backgroundColor: part.color }}
+                                  />
+                                )}
                                 <span className="truncate">{part.name}</span>
+                                {(part.type === 'rig' || part.type === 'npc') && part.attributes?.StarterCharacter && (
+                                  <span className={`text-[9px] px-1 rounded font-bold shrink-0 ${
+                                    isSelected ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  }`}>
+                                    Spawn
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1 ml-1 shrink-0">
                                 <span
@@ -2102,6 +2787,347 @@ print("Script Global do Workspace em execução!")
                         className="w-full bg-[#111216] border border-[#2b2f3c] rounded-lg px-2.5 py-1 text-white focus:outline-none focus:border-[#00a2ff]"
                       />
                     </div>
+
+                    {/* Humanoid & Rig Configuration (Vida, Pulo, Velocidade & StarterCharacter Spawn) */}
+                    {(selectedPart.type === 'rig' || selectedPart.type === 'npc') && (() => {
+                      const attrs = selectedPart.attributes || {};
+                      const maxHealth = Number(attrs.MaxHealth ?? 100);
+                      const walkSpeed = Number(attrs.WalkSpeed ?? 16);
+                      const jumpPower = Number(attrs.JumpPower ?? 50);
+                      const isStarter = Boolean(attrs.StarterCharacter);
+                      const headColor = String(attrs.RigHeadColor || '#facc15');
+                      const torsoColor = String(attrs.RigTorsoColor || selectedPart.color || '#0284c7');
+                      const armColor = String(attrs.RigArmColor || '#facc15');
+                      const legColor = String(attrs.RigLegColor || '#1e293b');
+                      const rigFace = String(attrs.RigFace || 'face-smile');
+
+                      const setRigAttr = (key: string, val: string | number | boolean, extraUpdates?: Partial<BloxPart>) => {
+                        updateSelectedPart({
+                          ...(extraUpdates || {}),
+                          attributes: {
+                            ...(selectedPart.attributes || {}),
+                            [key]: val
+                          }
+                        });
+                      };
+
+                      return (
+                        <div className="bg-emerald-950/20 border border-emerald-700/40 rounded-xl p-2.5 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wide flex items-center gap-1.5">
+                              <User className="w-3.5 h-3.5 text-emerald-400" />
+                              Humanoid & Rig
+                            </span>
+                            <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                              R6
+                            </span>
+                          </div>
+
+                          {/* Spawn Players as this Rig (StarterCharacter) */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStarterCharacter(selectedPart.id, !isStarter)}
+                            className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg border text-left transition-all cursor-pointer ${
+                              isStarter
+                                ? 'bg-emerald-600/30 border-emerald-400 text-white shadow-md shadow-emerald-900/30'
+                                : 'bg-[#111216] hover:bg-[#1a1d26] border-[#2b2f3c] text-slate-300'
+                            }`}
+                          >
+                            <div className="pr-2">
+                              <div className="text-[11px] font-bold flex items-center gap-1.5">
+                                <Users className={`w-3.5 h-3.5 ${isStarter ? 'text-emerald-300' : 'text-slate-400'}`} />
+                                <span>Spawnar Jogadores como este Rig</span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">
+                                {isStarter
+                                  ? 'Ativo! Ao jogar, os jogadores nascem com este visual e atributos.'
+                                  : 'Clique para usar este Rig como StarterCharacter ao iniciar o jogo.'}
+                              </p>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-black shrink-0 ${
+                              isStarter ? 'bg-emerald-500 text-black' : 'bg-[#252836] text-slate-400'
+                            }`}>
+                              {isStarter ? 'ON' : 'OFF'}
+                            </span>
+                          </button>
+
+                          {/* Vida Máxima (MaxHealth) */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-slate-300 font-semibold">Vida Máxima (MaxHealth)</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="5000"
+                                value={maxHealth}
+                                onChange={(e) => setRigAttr('MaxHealth', Math.max(1, parseFloat(e.target.value) || 100))}
+                                className="w-16 bg-[#111216] border border-[#2b2f3c] rounded px-1.5 py-0.5 text-center text-emerald-300 font-mono font-bold text-[11px]"
+                              />
+                            </div>
+                            <input
+                              type="range"
+                              min="10"
+                              max="1000"
+                              step="10"
+                              value={Math.min(1000, maxHealth)}
+                              onChange={(e) => setRigAttr('MaxHealth', parseFloat(e.target.value) || 100)}
+                              className="w-full accent-emerald-400 cursor-pointer"
+                            />
+                            <div className="flex gap-1">
+                              {[50, 100, 250, 500].map(v => (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() => setRigAttr('MaxHealth', v)}
+                                  className={`flex-1 text-[9px] py-0.5 rounded border font-mono cursor-pointer ${
+                                    maxHealth === v ? 'bg-emerald-500/30 border-emerald-400 text-emerald-200' : 'bg-[#111216] border-[#2b2f3c] text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  {v} HP
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Velocidade (WalkSpeed) */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-slate-300 font-semibold">Velocidade (WalkSpeed)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="200"
+                                value={walkSpeed}
+                                onChange={(e) => setRigAttr('WalkSpeed', Math.max(0, parseFloat(e.target.value) || 0))}
+                                className="w-16 bg-[#111216] border border-[#2b2f3c] rounded px-1.5 py-0.5 text-center text-cyan-300 font-mono font-bold text-[11px]"
+                              />
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={Math.min(100, walkSpeed)}
+                              onChange={(e) => setRigAttr('WalkSpeed', parseFloat(e.target.value) || 0)}
+                              className="w-full accent-cyan-400 cursor-pointer"
+                            />
+                            <div className="flex gap-1">
+                              {[8, 16, 32, 60].map(v => (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() => setRigAttr('WalkSpeed', v)}
+                                  className={`flex-1 text-[9px] py-0.5 rounded border font-mono cursor-pointer ${
+                                    walkSpeed === v ? 'bg-cyan-500/30 border-cyan-400 text-cyan-200' : 'bg-[#111216] border-[#2b2f3c] text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  {v}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Poder de Pulo (JumpPower) */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-slate-300 font-semibold">Poder de Pulo (JumpPower)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="300"
+                                value={jumpPower}
+                                onChange={(e) => setRigAttr('JumpPower', Math.max(0, parseFloat(e.target.value) || 0))}
+                                className="w-16 bg-[#111216] border border-[#2b2f3c] rounded px-1.5 py-0.5 text-center text-amber-300 font-mono font-bold text-[11px]"
+                              />
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="200"
+                              step="5"
+                              value={Math.min(200, jumpPower)}
+                              onChange={(e) => setRigAttr('JumpPower', parseFloat(e.target.value) || 0)}
+                              className="w-full accent-amber-400 cursor-pointer"
+                            />
+                            <div className="flex gap-1">
+                              {[25, 50, 85, 130].map(v => (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() => setRigAttr('JumpPower', v)}
+                                  className={`flex-1 text-[9px] py-0.5 rounded border font-mono cursor-pointer ${
+                                    jumpPower === v ? 'bg-amber-500/30 border-amber-400 text-amber-200' : 'bg-[#111216] border-[#2b2f3c] text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  {v}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Rig Colors & Face */}
+                          <div className="pt-2 border-t border-emerald-800/40 space-y-2">
+                            <span className="text-[10px] font-bold text-slate-300 block uppercase">Aparência do Rig</span>
+                            <div className="grid grid-cols-4 gap-1.5 text-center">
+                              <div>
+                                <span className="text-[9px] text-slate-400 block mb-0.5">Cabeça</span>
+                                <input
+                                  type="color"
+                                  value={headColor}
+                                  onChange={(e) => setRigAttr('RigHeadColor', e.target.value)}
+                                  className="w-full h-7 rounded bg-[#111216] border border-[#2b2f3c] cursor-pointer p-0.5"
+                                />
+                              </div>
+                              <div>
+                                <span className="text-[9px] text-slate-400 block mb-0.5">Torso</span>
+                                <input
+                                  type="color"
+                                  value={torsoColor}
+                                  onChange={(e) => setRigAttr('RigTorsoColor', e.target.value, { color: e.target.value })}
+                                  className="w-full h-7 rounded bg-[#111216] border border-[#2b2f3c] cursor-pointer p-0.5"
+                                />
+                              </div>
+                              <div>
+                                <span className="text-[9px] text-slate-400 block mb-0.5">Braços</span>
+                                <input
+                                  type="color"
+                                  value={armColor}
+                                  onChange={(e) => setRigAttr('RigArmColor', e.target.value)}
+                                  className="w-full h-7 rounded bg-[#111216] border border-[#2b2f3c] cursor-pointer p-0.5"
+                                />
+                              </div>
+                              <div>
+                                <span className="text-[9px] text-slate-400 block mb-0.5">Pernas</span>
+                                <input
+                                  type="color"
+                                  value={legColor}
+                                  onChange={(e) => setRigAttr('RigLegColor', e.target.value)}
+                                  className="w-full h-7 rounded bg-[#111216] border border-[#2b2f3c] cursor-pointer p-0.5"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] text-slate-400 shrink-0">Rosto:</span>
+                              <select
+                                value={rigFace}
+                                onChange={(e) => setRigAttr('RigFace', e.target.value)}
+                                className="flex-1 bg-[#111216] border border-[#2b2f3c] rounded px-2 py-1 text-white text-[11px]"
+                              >
+                                <option value="face-smile">Sorriso Clássico</option>
+                                <option value="face-chill">Óculos Chill</option>
+                                <option value="face-beast">Feroz / Beast</option>
+                              </select>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-1">
+                              {[
+                                { label: 'Noob', h: '#facc15', t: '#0284c7', a: '#facc15', l: '#22c55e' },
+                                { label: 'Dummy', h: '#cbd5e1', t: '#94a3b8', a: '#cbd5e1', l: '#64748b' },
+                                { label: 'Ninja', h: '#ffdab9', t: '#18181b', a: '#18181b', l: '#0f172a' }
+                              ].map(theme => (
+                                <button
+                                  key={theme.label}
+                                  type="button"
+                                  onClick={() => updateSelectedPart({
+                                    color: theme.t,
+                                    attributes: {
+                                      ...(selectedPart.attributes || {}),
+                                      RigHeadColor: theme.h,
+                                      RigTorsoColor: theme.t,
+                                      RigArmColor: theme.a,
+                                      RigLegColor: theme.l
+                                    }
+                                  })}
+                                  className="text-[9px] bg-[#111216] hover:bg-[#1e2230] border border-[#2b2f3c] hover:border-emerald-400 px-1.5 py-1 rounded text-slate-300 font-semibold cursor-pointer"
+                                >
+                                  {theme.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Rig AI & Death Event Script Quick Actions */}
+                          {(() => {
+                            const rigScripts = scripts.filter(s => s.parentPartId === selectedPart.id);
+                            return (
+                              <div className="pt-2 border-t border-emerald-800/40 space-y-1.5">
+                                <span className="text-[10px] font-bold text-rose-300 uppercase flex items-center gap-1.5">
+                                  <Swords className="w-3.5 h-3.5 text-rose-400" />
+                                  IA & Scripts do Rig
+                                </span>
+                                <div className="grid grid-cols-1 gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAttachChaseScriptToRig(selectedPart.id, false)}
+                                    className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-600/25 hover:bg-rose-600/40 border border-rose-500/60 text-rose-200 text-[11px] font-bold transition-all cursor-pointer active:scale-95"
+                                  >
+                                    <Swords className="w-3.5 h-3.5 text-rose-300" />
+                                    <span>+ Perseguir & Atacar</span>
+                                  </button>
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAttachDeathScriptToRig(selectedPart.id, 'coin', false)}
+                                      className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/50 text-amber-200 text-[10px] font-bold transition-all cursor-pointer active:scale-95"
+                                      title="Conecta Humanoid.Died para dropar uma moeda onde o inimigo morreu"
+                                    >
+                                      <Coins className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                                      <span className="truncate">Morrer: Moeda</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAttachDeathScriptToRig(selectedPart.id, 'part', false)}
+                                      className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/35 border border-sky-400/50 text-sky-200 text-[10px] font-bold transition-all cursor-pointer active:scale-95"
+                                      title="Conecta Humanoid.Died para criar uma parte onde o inimigo morreu"
+                                    >
+                                      <Box className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+                                      <span className="truncate">Morrer: Parte</span>
+                                    </button>
+                                  </div>
+                                </div>
+                                {rigScripts.length > 0 && (
+                                  <div className="space-y-1 pt-1">
+                                    {rigScripts.map(rs => (
+                                      <div
+                                        key={rs.id}
+                                        className="flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg bg-[#111216] border border-rose-500/35 text-[11px]"
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenScript(rs)}
+                                          className="flex items-center gap-1.5 text-left truncate text-rose-200 hover:text-white font-semibold cursor-pointer"
+                                        >
+                                          <FileCode className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                          <span className="truncate">{rs.name}</span>
+                                        </button>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenScript(rs)}
+                                            className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 hover:text-white text-[10px] font-bold cursor-pointer"
+                                          >
+                                            Editar
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteScript(rs.id)}
+                                            className="p-0.5 rounded text-slate-400 hover:text-rose-400 cursor-pointer"
+                                            title="Remover script do Rig"
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })()}
 
                     {/* Transform: Position (Studs) */}
                     <div>
@@ -2921,7 +3947,7 @@ print("Script Global do Workspace em execução!")
       {/* Publish Game Modal */}
       {showPublishModal && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#1b1d26] border border-[#2e3242] rounded-2xl w-full max-w-lg p-6 shadow-2xl">
+          <div className="bg-[#191b1d] border border-[#2e3242] rounded-2xl w-full max-w-lg p-6 shadow-2xl">
             <div className="flex items-center justify-between pb-4 border-b border-[#2e3242] mb-5">
               <div className="flex items-center gap-2.5">
                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
@@ -2931,10 +3957,10 @@ print("Script Global do Workspace em execução!")
                 </div>
                 <div>
                   <h3 className="font-extrabold text-base text-white">
-                    {initialGame ? 'Salvar e Atualizar Experiência' : 'Publish Experience'}
+                    {initialGame ? 'Salvar e Atualizar Experiência' : 'Publicar no Roblox'}
                   </h3>
                   <p className="text-xs text-slate-400">
-                    {initialGame ? 'Suas alterações serão salvas diretamente no Catálogo de Jogos' : 'Deploy your 3D world to the BloxVerse Discover Feed'}
+                    {initialGame ? 'Suas alterações serão salvas diretamente na experiência' : 'Publique seu mundo 3D no Descobrir do Roblox'}
                   </p>
                 </div>
               </div>
@@ -2948,62 +3974,65 @@ print("Script Global do Workspace em execução!")
 
             <div className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1.5">Game Title</label>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">Título da Experiência</label>
                 <input
                   type="text"
                   value={publishTitle}
                   onChange={(e) => setPublishTitle(e.target.value)}
-                  className="w-full bg-[#121319] border border-[#2b2f3c] rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-[#00a2ff] text-sm"
-                  placeholder="e.g. Super Neon Parkour Obby"
+                  className="w-full bg-[#111216] border border-[#2b2f3c] rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-[#00a2ff] text-sm"
+                  placeholder="ex: Super Parkour Obby 2022"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1.5">Description</label>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">Descrição</label>
                 <textarea
                   value={publishDesc}
                   onChange={(e) => setPublishDesc(e.target.value)}
                   rows={3}
-                  className="w-full bg-[#121319] border border-[#2b2f3c] rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-[#00a2ff] text-sm resize-none"
-                  placeholder="Tell players what makes your experience epic..."
+                  className="w-full bg-[#111216] border border-[#2b2f3c] rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-[#00a2ff] text-sm resize-none"
+                  placeholder="Conte aos jogadores o que torna sua experiência incrível..."
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-300 block mb-1.5">Genre</label>
+                  <label className="text-xs font-bold text-slate-300 block mb-1.5">Gênero</label>
                   <select
                     value={publishGenre}
                     onChange={(e) => setPublishGenre(e.target.value as GameMetadata['genre'])}
-                    className="w-full bg-[#121319] border border-[#2b2f3c] rounded-xl px-3 py-2 text-white text-sm"
+                    className="w-full bg-[#111216] border border-[#2b2f3c] rounded-xl px-3 py-2 text-white text-sm"
                   >
                     <option value="Obby / Parkour">Obby / Parkour</option>
-                    <option value="Adventure">Adventure</option>
+                    <option value="Adventure">Aventura</option>
                     <option value="Tycoon">Tycoon</option>
-                    <option value="Survival">Survival</option>
-                    <option value="Horror">Horror</option>
+                    <option value="Survival">Sobrevivência</option>
+                    <option value="Horror">Terror</option>
                     <option value="Sandbox">Sandbox</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold text-slate-300 block mb-1.5">Price (BloxBux)</label>
+                  <label className="text-xs font-bold text-slate-300 block mb-1.5 flex items-center gap-1">
+                    <RobuxIcon className="w-3.5 h-3.5 text-[#00e676]" color="#00e676" />
+                    <span>Preço de Acesso (Robux)</span>
+                  </label>
                   <input
                     type="number"
                     min="0"
                     value={publishPrice}
                     onChange={(e) => setPublishPrice(parseInt(e.target.value) || 0)}
-                    className="w-full bg-[#121319] border border-[#2b2f3c] rounded-xl px-3 py-2 text-white text-sm"
-                    placeholder="0 = Free"
+                    className="w-full bg-[#111216] border border-[#2b2f3c] rounded-xl px-3 py-2 text-white text-sm"
+                    placeholder="0 = Grátis"
                   />
-                  <span className="text-[10px] text-slate-400 mt-1 block">0 = Free to Play for everyone</span>
+                  <span className="text-[10px] text-slate-400 mt-1 block">0 = Grátis para todos os jogadores</span>
                 </div>
               </div>
 
-              <div className="bg-[#121319] border border-[#282b36] rounded-xl p-3 flex items-center gap-3">
+              <div className="bg-[#111216] border border-[#282b36] rounded-xl p-3 flex items-center gap-3">
                 <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                 <p className="text-xs text-slate-300">
-                  Ready to deploy! Your experience has <span className="font-bold text-emerald-400">{parts.length} parts</span> and includes automatic leaderboard & checkpoints.
+                  Pronto para publicar! Sua experiência contém <span className="font-bold text-emerald-400">{parts.length} peças</span>, scripts Luau ativos e checkpoints.
                 </p>
               </div>
             </div>
@@ -3013,7 +4042,7 @@ print("Script Global do Workspace em execução!")
                 onClick={() => setShowPublishModal(false)}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={handlePublish}
@@ -3024,11 +4053,12 @@ print("Script Global do Workspace em execução!")
                 }`}
               >
                 {initialGame ? <Save className="w-4 h-4" /> : <Upload className="w-4 h-4" />}
-                <span>{initialGame ? 'Salvar Alterações no Catálogo' : 'Publish to Discover'}</span>
+                <span>{initialGame ? 'Salvar Alterações no Catálogo' : 'Publicar no Roblox'}</span>
               </button>
             </div>
           </div>
         </div>
+
       )}
 
       {/* Luau Script Editor Modal */}
@@ -3048,8 +4078,8 @@ print("Script Global do Workspace em execução!")
         />
       )}
 
-      {/* BloxCopilot AI Assistant Drawer */}
-      <BloxCopilot
+      {/* Zephyr AI Assistant Drawer */}
+      <ZephyrAI
         isOpen={isCopilotOpen}
         onClose={() => setIsCopilotOpen(false)}
         parts={parts}
@@ -3076,6 +4106,101 @@ print("Script Global do Workspace em execução!")
         gameGenre={publishGenre}
         initialPrompt={copilotInitialPrompt}
       />
+
+      {/* Keyboard Shortcuts Reference Modal */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-[#1b1d26] border border-[#2e3242] rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2e3242] shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-[#00a2ff]/15 border border-[#00a2ff]/40">
+                  <Keyboard className="w-5 h-5 text-[#00a2ff]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Atalhos de Teclado do Studio</h3>
+                  <p className="text-xs text-slate-400">Estilo Roblox Studio para construir e testar mais rápido</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="p-1.5 rounded-xl hover:bg-[#272a38] text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="bg-[#14151c] border border-[#282b38] rounded-xl p-3.5 space-y-2">
+                <h4 className="font-bold text-[#00a2ff] uppercase tracking-wider text-[11px]">Edição & Histórico</h4>
+                {[
+                  ['Ctrl + Z', 'Desfazer alteração'],
+                  ['Ctrl + Y / Ctrl + Shift + Z', 'Refazer alteração'],
+                  ['Ctrl + C', 'Copiar peça selecionada'],
+                  ['Ctrl + V', 'Colar peça copiada'],
+                  ['Ctrl + D', 'Duplicar peça selecionada'],
+                  ['Delete / Backspace', 'Excluir peça selecionada'],
+                  ['Ctrl + S', 'Salvar / Publicar jogo'],
+                  ['Esc', 'Limpar seleção / Fechar modal'],
+                ].map(([keys, desc]) => (
+                  <div key={keys} className="flex items-center justify-between gap-2 py-1 border-b border-[#222532] last:border-b-0">
+                    <span className="text-slate-300">{desc}</span>
+                    <kbd className="font-mono text-[10px] bg-[#202330] text-slate-200 px-1.5 py-0.5 rounded border border-[#34394d] shrink-0">{keys}</kbd>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-[#14151c] border border-[#282b38] rounded-xl p-3.5 space-y-2">
+                <h4 className="font-bold text-emerald-400 uppercase tracking-wider text-[11px]">Peça, Ferramentas & Câmera</h4>
+                {[
+                  ['1 / 2', 'Ferramenta Move / Scale'],
+                  ['R', 'Girar peça selecionada (+45° Y)'],
+                  ['T', 'Inclinar peça selecionada (+45° X)'],
+                  ['G', 'Alternar Anchored (Âncora)'],
+                  ['C', 'Alternar CanCollide (Colisão)'],
+                  ['F', 'Focar câmera na peça / Spawn'],
+                  ['W A S D + Q E', 'Voar pela câmera do Studio'],
+                ].map(([keys, desc]) => (
+                  <div key={keys} className="flex items-center justify-between gap-2 py-1 border-b border-[#222532] last:border-b-0">
+                    <span className="text-slate-300">{desc}</span>
+                    <kbd className="font-mono text-[10px] bg-[#202330] text-slate-200 px-1.5 py-0.5 rounded border border-[#34394d] shrink-0">{keys}</kbd>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-[#14151c] border border-[#282b38] rounded-xl p-3.5 space-y-2 sm:col-span-2">
+                <h4 className="font-bold text-amber-400 uppercase tracking-wider text-[11px]">Simulação & Painéis</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                  {[
+                    ['F5', 'Iniciar / Parar Playtest'],
+                    ['F8', 'Ligar / Pausar Física (Run)'],
+                    ['F11', 'Alternar Tela Cheia'],
+                    ['F1 ou ?', 'Abrir / Fechar esta ajuda'],
+                    ['Alt + T', 'Mostrar / Ocultar Toolbox'],
+                    ['Alt + E', 'Mostrar / Ocultar Explorer'],
+                    ['Alt + Z', 'Abrir / Fechar Zephyr AI'],
+                    ['Alt + N', 'Inserir novo Bloco rapidamente'],
+                    ['Alt + L', 'Abrir Editor de Scripts Luau'],
+                  ].map(([keys, desc]) => (
+                    <div key={keys} className="flex items-center justify-between gap-2 py-1 border-b border-[#222532]">
+                      <span className="text-slate-300">{desc}</span>
+                      <kbd className="font-mono text-[10px] bg-[#202330] text-slate-200 px-1.5 py-0.5 rounded border border-[#34394d] shrink-0">{keys}</kbd>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-[#2e3242] flex justify-end shrink-0">
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="px-4 py-2 rounded-xl bg-[#00a2ff] hover:bg-[#0090e0] text-white text-xs font-bold cursor-pointer"
+              >
+                Entendi (Esc)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

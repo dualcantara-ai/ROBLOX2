@@ -18,7 +18,7 @@ import {
 import { BloxPart, BloxVector3 } from '../../types';
 import { LuauScriptInstance, LuauLogEntry } from '../../services/luau/types';
 import { LUAU_TEMPLATES } from '../../services/luau/luauTemplates';
-import { luauEngine } from '../../services/luau/luauRuntime';
+import { luauEngine, LuauEngine } from '../../services/luau/luauRuntime';
 
 interface ScriptEditorModalProps {
   script: LuauScriptInstance;
@@ -217,6 +217,12 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
                     Pronto
                   </span>
                 )}
+                {LuauEngine.hasEndAtEnd(source) && (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" title="Script possui 'end' no final e reexecuta automaticamente ao terminar">
+                    <RefreshCw className="w-3 h-3 text-indigo-400" />
+                    Auto-Loop (end no final)
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2">
                 <span>Instância: <strong className="text-slate-300">Script</strong></span>
@@ -257,13 +263,13 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
             {onOpenCopilotWithPrompt && (
               <button
                 onClick={() => {
-                  onOpenCopilotWithPrompt(`Melhore ou me ajude a scriptar o código do script "${name}":\n\n\`\`\`luau\n${source}\n\`\`\``);
+                  onOpenCopilotWithPrompt(`Analise e me dê dicas ou melhorias para o script "${name}":\n\n\`\`\`luau\n${source}\n\`\`\``);
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-purple-600/20 transition-all cursor-pointer"
-                title="Pedir ajuda ao Copilot AI para este script"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-cyan-600/20 transition-all cursor-pointer"
+                title="Pedir ajuda ao Zephyr AI para este script"
               >
-                <Sparkles className="w-3.5 h-3.5" />
-                Copilot IA
+                <Sparkles className="w-3.5 h-3.5 text-cyan-200" />
+                Zephyr AI
               </button>
             )}
 

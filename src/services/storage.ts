@@ -225,6 +225,45 @@ function createObbyParts(): BloxPart[] {
         Friction: 0.1
       }
     },
+    {
+      id: 'part-physics-ball',
+      name: 'Roblox Soccer Ball',
+      className: 'Part',
+      type: 'sphere',
+      position: { x: 3.5, y: 2, z: -2 },
+      size: { x: 2.2, y: 2.2, z: 2.2 },
+      rotation: { x: 0, y: 0, z: 0 },
+      color: '#f8fafc',
+      material: 'plastic',
+      anchored: false,
+      isAnchored: false,
+      canCollide: true,
+      transparency: 0,
+      attributes: {
+        Mass: 4,
+        Pushable: true,
+        Elasticity: 0.8
+      }
+    },
+    {
+      id: 'part-physics-crate',
+      name: 'Physics Crate',
+      className: 'Part',
+      type: 'block',
+      position: { x: 2, y: 2, z: -1 },
+      size: { x: 2, y: 2, z: 2 },
+      rotation: { x: 0, y: 15, z: 0 },
+      color: '#d97706',
+      material: 'brick',
+      anchored: false,
+      isAnchored: false,
+      canCollide: true,
+      transparency: 0,
+      attributes: {
+        Mass: 15,
+        Pushable: true
+      }
+    },
     // Invisible Barrier Wall (Transparency = 1.0, CanCollide = true)
     {
       id: 'part-invis-barrier-1',

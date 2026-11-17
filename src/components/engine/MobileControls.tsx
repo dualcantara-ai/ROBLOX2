@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { ArrowUp, Flame, Zap } from 'lucide-react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { ArrowUp, Flame, Swords } from 'lucide-react';
 
 export interface MobileControlState {
   forward: number; // -1 to 1 (1 = forward, -1 = backward)
@@ -11,18 +11,30 @@ export interface MobileControlState {
 interface MobileControlsProps {
   onControlChange: (controls: MobileControlState) => void;
   onCameraRotate?: (deltaYaw: number, deltaPitch: number) => void;
+  onUseTool?: () => void;
+  equippedToolLabel?: string | null;
   className?: string;
 }
 
 export const MobileControls: React.FC<MobileControlsProps> = ({
   onControlChange,
   onCameraRotate,
+  onUseTool,
+  equippedToolLabel,
   className = ''
 }) => {
   const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDraggingJoystick, setIsDraggingJoystick] = useState<boolean>(false);
   const [isJumping, setIsJumping] = useState<boolean>(false);
   const [isSprinting, setIsSprinting] = useState<boolean>(false);
+  const [isTouchDevice, setIsTouchDevice] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const coarse = window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+      setIsTouchDevice(coarse);
+    }
+  }, []);
 
   const joystickBaseRef = useRef<HTMLDivElement>(null);
   const touchIdRef = useRef<number | null>(null);
@@ -104,20 +116,22 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
     updateControls({ forward: 0, turn: 0 });
   };
 
-  // Right Side Touch Zone for Camera Rotation
-  const cameraTouchRef = useRef<{ id: number | null; startX: number; startY: number }>({
+  // Right Side Touch Zone for Camera Rotation (touch-only so desktop mouse clicks pass directly to the 3D canvas)
+  const cameraTouchRef = useRef<{ id: number | null; startX: number; startY: number; moved: boolean }>({
     id: null,
     startX: 0,
-    startY: 0
+    startY: 0,
+    moved: false
   });
 
   const handleCameraPointerDown = (e: React.PointerEvent) => {
-    // Only capture if not clicking buttons
+    if (e.pointerType !== 'touch') return;
     if ((e.target as HTMLElement).closest('button')) return;
     cameraTouchRef.current = {
       id: e.pointerId,
       startX: e.clientX,
-      startY: e.clientY
+      startY: e.clientY,
+      moved: false
     };
     try {
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -128,6 +142,9 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
     if (cameraTouchRef.current.id !== e.pointerId) return;
     const dx = e.clientX - cameraTouchRef.current.startX;
     const dy = e.clientY - cameraTouchRef.current.startY;
+    if (Math.hypot(dx, dy) > 4) {
+      cameraTouchRef.current.moved = true;
+    }
 
     cameraTouchRef.current.startX = e.clientX;
     cameraTouchRef.current.startY = e.clientY;
@@ -139,10 +156,14 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
 
   const handleCameraPointerUp = (e: React.PointerEvent) => {
     if (cameraTouchRef.current.id === e.pointerId) {
+      const wasTap = !cameraTouchRef.current.moved;
       cameraTouchRef.current.id = null;
       try {
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
       } catch {}
+      if (wasTap && onUseTool) {
+        onUseTool();
+      }
     }
   };
 
@@ -169,14 +190,16 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
 
   return (
     <div className={`absolute inset-0 pointer-events-none select-none touch-none ${className}`}>
-      {/* Right-side camera swipe area */}
-      <div
-        className="absolute top-24 bottom-24 right-0 w-1/2 pointer-events-auto touch-none"
-        onPointerDown={handleCameraPointerDown}
-        onPointerMove={handleCameraPointerMove}
-        onPointerUp={handleCameraPointerUp}
-        onPointerCancel={handleCameraPointerUp}
-      />
+      {/* Right-side camera swipe area (only active on coarse touch devices so desktop clicks reach the canvas) */}
+      {isTouchDevice && (
+        <div
+          className="absolute top-24 bottom-24 right-0 w-1/2 pointer-events-auto touch-none"
+          onPointerDown={handleCameraPointerDown}
+          onPointerMove={handleCameraPointerMove}
+          onPointerUp={handleCameraPointerUp}
+          onPointerCancel={handleCameraPointerUp}
+        />
+      )}
 
       {/* Bottom Control Bar */}
       <div className="absolute bottom-6 inset-x-6 flex items-end justify-between pointer-events-none">
@@ -234,8 +257,28 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
           </span>
         </div>
 
-        {/* RIGHT: Action Buttons (Jump + Sprint) */}
+        {/* RIGHT: Action Buttons (Attack + Sprint + Jump) */}
         <div className="pointer-events-auto flex items-end gap-3.5">
+          {equippedToolLabel && onUseTool && (
+            <div className="flex flex-col items-center">
+              <button
+                type="button"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onUseTool();
+                }}
+                className="w-14 h-14 rounded-full flex items-center justify-center shadow-xl border-2 bg-rose-600/90 hover:bg-rose-500 text-white border-rose-300/70 transition-transform active:scale-90 cursor-pointer"
+                title={`Usar ${equippedToolLabel}`}
+              >
+                <Swords className="w-6 h-6" />
+              </button>
+              <span className="text-[9px] font-black uppercase text-rose-300 mt-1">
+                Atacar
+              </span>
+            </div>
+          )}
+
           {/* Sprint / Nitro Boost Button */}
           <div className="flex flex-col items-center">
             <button

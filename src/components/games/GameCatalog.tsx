@@ -5,17 +5,21 @@ import {
   Users, 
   ChevronRight, 
   Plus, 
-  Volume2, 
-  Clock, 
   Sparkles, 
-  Lock, 
   Pencil, 
   Wrench,
   Search,
-  CheckCircle2
+  CheckCircle2,
+  Flame,
+  Star,
+  Gamepad2,
+  Clock,
+  Share2
 } from 'lucide-react';
 import { GameMetadata, GamePass, UserProfile, Friend } from '../../types';
 import { sounds } from '../../services/soundEffects';
+import { RobloxLogo, RobuxIcon, RobloxVerifiedBadge } from '../common/RobloxIcons';
+import { AvatarHeadshot } from '../common/AvatarHeadshot';
 
 interface GameCatalogProps {
   games: GameMetadata[];
@@ -43,6 +47,7 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
   onOpenAuthModal
 }) => {
   const [selectedGameDetails, setSelectedGameDetails] = useState<GameMetadata | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<'about' | 'store' | 'servers'>('about');
 
   // Check if current user is the creator of a given game
   const isGameCreator = (game: GameMetadata | null): boolean => {
@@ -54,26 +59,67 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
     );
   };
 
-  // Recomendações: Wide banner rectangular cards
-  const recommendedGames = games;
-
-  // Continuar: Square game cards
-  const continueGames = games;
+  // Sections
+  const featuredGames = games;
+  const popularGames = [...games].reverse();
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-8 select-none font-sans text-slate-100">
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-9 select-none font-sans text-slate-100">
       
-      {/* 1. SEÇÃO DE AMIZADES (Ocultada quando todas as amizades são retiradas) */}
+      {/* ======================================================== */}
+      {/* 2022 ROBLOX HOME GREETING BANNER                          */}
+      {/* ======================================================== */}
+      <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-[#191b1d] via-[#1e2025] to-[#191b1d] border border-white/10 rounded-3xl p-5 sm:p-6 shadow-xl">
+        <div className="flex items-center gap-4">
+          <div className="relative shrink-0">
+            <AvatarHeadshot
+              avatar={currentUser.avatar}
+              alt={currentUser.displayName}
+              className="w-16 h-16 sm:w-18 sm:h-18 rounded-full border-2 border-white/20 shadow-lg"
+            />
+            <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-[#10b981] border-2 border-[#191b1d] shadow-sm" />
+          </div>
+
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                Olá, {currentUser.displayName}!
+              </h1>
+              <RobloxVerifiedBadge size={18} />
+            </div>
+            <p className="text-xs sm:text-sm text-slate-400">
+              @{currentUser.username} • Saldo: <strong className="text-emerald-400 font-bold">{userBloxbux.toLocaleString()} Robux</strong>
+            </p>
+          </div>
+        </div>
+
+        {/* Quick Studio Create CTA */}
+        {onOpenStudio && !currentUser.isGuest && (
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onOpenStudio();
+            }}
+            className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#00a2ff] hover:bg-[#0090e0] text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-500/25 transition-transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer shrink-0"
+          >
+            <Pencil className="w-4 h-4" />
+            <span>Criar no Roblox Studio</span>
+          </button>
+        )}
+      </section>
+
+      {/* ======================================================== */}
+      {/* 1. SEÇÃO DE AMIZADES (2022 Friends Carousel)             */}
+      {/* ======================================================== */}
       {friends.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center gap-1.5 cursor-pointer group w-fit">
             <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
-              Amizades ({friends.length})
+              Amigos ({friends.length})
             </h2>
             <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
           </div>
 
-          {/* Horizontal Friend Avatars Scroll */}
           <div className="flex items-start gap-4 overflow-x-auto pb-2 pt-1 scrollbar-thin scrollbar-thumb-white/10 hover:scrollbar-thumb-white/20">
             {/* Add Friend Circle */}
             <div className="flex flex-col items-center gap-1.5 shrink-0 group cursor-pointer w-18">
@@ -112,7 +158,7 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                     </div>
 
                     {isOnline && (
-                      <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-[#10b981] border-2 border-[#111216] shadow-sm animate-pulse" />
+                      <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-[#10b981] border-2 border-[#191b1d] shadow-sm animate-pulse" />
                     )}
                   </div>
 
@@ -121,7 +167,7 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                       {friend.displayName}
                     </span>
                     {isPlaying && friend.currentGame ? (
-                      <span className="text-[9px] text-amber-400 font-semibold truncate block max-w-18">
+                      <span className="text-[9px] text-[#00a2ff] font-semibold truncate block max-w-18">
                         {friend.currentGame}
                       </span>
                     ) : null}
@@ -133,17 +179,18 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
         </section>
       )}
 
-      {/* 2. JOGOS OU ESTADO VAZIO */}
+      {/* ======================================================== */}
+      {/* 2. EXPERIÊNCIAS (2022 Roblox Experience Cards)            */}
+      {/* ======================================================== */}
       {games.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 px-6 text-center bg-[#151720]/80 border border-white/10 rounded-3xl space-y-5 shadow-2xl backdrop-blur-md">
-          {/* Black tilted logo */}
-          <div className="w-20 h-20 bg-black border border-white/20 rounded-2xl flex items-center justify-center shadow-xl transform -rotate-12">
-            <div className="w-6 h-6 bg-[#151720] rounded-md transform rotate-12" />
+        <div className="flex flex-col items-center justify-center py-24 px-6 text-center bg-[#191b1d] border border-white/10 rounded-3xl space-y-5 shadow-2xl backdrop-blur-md">
+          <div className="w-20 h-20 bg-black border border-white/20 rounded-2xl flex items-center justify-center shadow-xl">
+            <RobloxLogo size={44} color="#ffffff" />
           </div>
           <div className="space-y-2 max-w-md">
-            <h2 className="text-2xl font-black text-white tracking-wide">Nenhum jogo no momento</h2>
+            <h2 className="text-2xl font-black text-white tracking-wide">Nenhuma experiência no momento</h2>
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-              Todos os jogos foram retirados. Crie e publique sua própria experiência 3D com blocos dinâmicos e scripts Luau no Basehub Studio!
+              Crie mundos no Roblox Studio 2022 com blocos físicos e scripts Luau para jogá-los com outros jogadores!
             </p>
           </div>
           {onOpenStudio && (
@@ -152,55 +199,55 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                 sounds.playClick();
                 onOpenStudio();
               }}
-              className="flex items-center gap-2 bg-[#00a2ff] hover:bg-[#0090e3] text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-lg shadow-[#00a2ff]/25 transition-all cursor-pointer hover:scale-105 active:scale-95"
+              className="px-6 py-3 rounded-2xl bg-[#00a2ff] hover:bg-[#0090e0] text-white font-extrabold text-sm shadow-xl shadow-blue-500/25 transition-all cursor-pointer"
             >
-              <Sparkles className="w-4 h-4" />
-              Criar no Basehub Studio
+              Abrir Roblox Studio
             </button>
           )}
         </div>
       ) : (
         <>
-          {/* RECOMENDAÇÕES PARA VOCÊ */}
+          {/* DESTAQUES / RECOMENDADOS */}
           <section className="space-y-3.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 cursor-pointer group">
-                <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
-                  Recomendações para você
-                </h2>
-                <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
-              </div>
+            <div className="flex items-center gap-1.5 cursor-pointer group w-fit">
+              <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
+                Destaques
+              </h2>
+              <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5 sm:gap-4">
-              {recommendedGames.map((game, idx) => {
-                const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 500))) * 100);
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 sm:gap-4">
+              {featuredGames.map((game) => {
+                const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 200))) * 100);
+                const activePlayers = game.playingCount >= 1000 
+                  ? `${(game.playingCount / 1000).toFixed(1)} mil` 
+                  : `${game.playingCount}`;
 
                 return (
                   <div
-                    key={game.id}
+                    key={`feat-${game.id}`}
                     onClick={() => {
                       sounds.playClick();
                       setSelectedGameDetails(game);
                     }}
-                    className="group flex flex-col space-y-2 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                    className="group flex flex-col space-y-2 cursor-pointer transition-transform duration-150 hover:-translate-y-1"
                   >
-                    <div className="relative aspect-[16/9] rounded-2xl overflow-hidden bg-[#181a24] border border-white/10 group-hover:border-white/40 shadow-lg">
+                    {/* 16:9 Thumbnail */}
+                    <div className="relative aspect-video rounded-xl overflow-hidden bg-[#111216] border border-white/10 group-hover:border-white/30 shadow-md">
                       <img
                         src={game.thumbnail}
                         alt={game.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
                       />
-
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             sounds.playClick();
                             onPlayGame(game);
                           }}
-                          className="w-11 h-11 rounded-full bg-[#10b981] hover:bg-[#059669] text-white flex items-center justify-center shadow-xl transform scale-90 group-hover:scale-100 transition-all cursor-pointer"
+                          className="w-11 h-11 rounded-full bg-[#00b06f] hover:bg-[#00945e] text-white flex items-center justify-center shadow-2xl transform scale-95 group-hover:scale-100 transition-transform cursor-pointer"
                           title="Jogar Agora"
                         >
                           <Play className="w-5 h-5 fill-white ml-0.5" />
@@ -208,14 +255,26 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                       </div>
                     </div>
 
-                    <div className="space-y-0.5">
-                      <h3 className="text-xs sm:text-sm font-extrabold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
+                    {/* Metadata */}
+                    <div className="space-y-0.5 px-0.5">
+                      <h3 className="text-xs sm:text-sm font-bold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
                         {game.title}
                       </h3>
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-semibold">
-                        <ThumbsUp className="w-3.5 h-3.5 fill-slate-400/20" />
-                        <span>Avaliação {likePercent}%</span>
+                      
+                      <div className="flex items-center gap-2 text-[11px] text-slate-400 font-semibold">
+                        <span className="flex items-center gap-1">
+                          <ThumbsUp className="w-3 h-3 fill-slate-400/20" />
+                          {likePercent}%
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          {activePlayers}
+                        </span>
                       </div>
+
+                      <p className="text-[10px] text-slate-500 truncate">
+                        Por @{game.creator.username}
+                      </p>
                     </div>
                   </div>
                 );
@@ -223,57 +282,60 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
             </div>
           </section>
 
-          {/* CONTINUAR */}
-          <section className="space-y-3.5 pt-2">
+          {/* MAIS POPULARES */}
+          <section className="space-y-3.5 pt-4">
             <div className="flex items-center gap-1.5 cursor-pointer group w-fit">
               <h2 className="text-base sm:text-lg font-black text-white group-hover:text-[#00a2ff] transition-colors">
-                Continuar
+                Mais Populares
               </h2>
               <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors" />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 sm:gap-3.5">
-              {continueGames.map((game, idx) => {
-                const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 500))) * 100);
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 sm:gap-4">
+              {popularGames.map((game, idx) => {
+                const likePercent = Math.round((game.likes / (game.likes + (game.dislikes || 200))) * 100);
                 const activePlayers = game.playingCount >= 1000 
                   ? `${(game.playingCount / 1000).toFixed(1)} mil` 
                   : `${game.playingCount}`;
 
                 return (
                   <div
-                    key={`cont-${game.id}-${idx}`}
+                    key={`pop-${game.id}-${idx}`}
                     onClick={() => {
                       sounds.playClick();
-                      onPlayGame(game);
+                      setSelectedGameDetails(game);
                     }}
-                    className="group flex flex-col space-y-1.5 cursor-pointer transition-transform duration-200 hover:-translate-y-1"
+                    className="group flex flex-col space-y-2 cursor-pointer transition-transform duration-150 hover:-translate-y-1"
                   >
-                    <div className="relative aspect-square rounded-2xl overflow-hidden bg-[#181a24] border border-white/10 group-hover:border-white/40 shadow-lg">
+                    <div className="relative aspect-video rounded-xl overflow-hidden bg-[#111216] border border-white/10 group-hover:border-white/30 shadow-md">
                       <img
                         src={game.thumbnail}
                         alt={game.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
                       />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <Play className="w-8 h-8 fill-white text-white drop-shadow-md" />
                       </div>
                     </div>
 
-                    <div className="space-y-0.5">
-                      <h4 className="text-xs font-bold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
+                    <div className="space-y-0.5 px-0.5">
+                      <h4 className="text-xs sm:text-sm font-bold text-white truncate group-hover:text-[#00a2ff] transition-colors leading-tight">
                         {game.title}
                       </h4>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-semibold">
+                      <div className="flex items-center gap-2 text-[11px] text-slate-400 font-semibold">
                         <span className="flex items-center gap-1">
                           <ThumbsUp className="w-3 h-3 fill-slate-400/20" />
                           {likePercent}%
                         </span>
-                        <span className="flex items-center gap-1 text-slate-400">
+                        <span className="flex items-center gap-1">
                           <Users className="w-3 h-3" />
                           {activePlayers}
                         </span>
                       </div>
+                      <p className="text-[10px] text-slate-500 truncate">
+                        Por @{game.creator.username}
+                      </p>
                     </div>
                   </div>
                 );
@@ -283,18 +345,21 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
         </>
       )}
 
-      {/* GAME DETAILS MODAL (When clicking a card to view passes/badges and play) */}
+      {/* ======================================================== */}
+      {/* 2022 ROBLOX EXPERIENCE DETAIL PAGE MODAL                 */}
+      {/* ======================================================== */}
       {selectedGameDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in zoom-in-95 duration-150">
-          <div className="relative w-full max-w-xl bg-[#181b24] border border-white/15 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-            {/* Header Image */}
-            <div className="relative h-56 sm:h-64 w-full bg-[#111318]">
+          <div className="relative w-full max-w-2xl bg-[#191b1d] border border-white/20 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+            
+            {/* Header Banner */}
+            <div className="relative h-60 sm:h-72 w-full bg-[#111216]">
               <img
                 src={selectedGameDetails.thumbnail}
                 alt={selectedGameDetails.title}
                 className="w-full h-full object-cover"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#181b24] via-black/30 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#191b1d] via-black/40 to-transparent" />
               
               <button
                 onClick={() => setSelectedGameDetails(null)}
@@ -303,107 +368,24 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                 ✕
               </button>
 
-              <div className="absolute bottom-4 left-5 right-5 space-y-1">
+              <div className="absolute bottom-4 left-6 right-6 space-y-1">
                 <span className="bg-[#00a2ff] text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-md">
                   {selectedGameDetails.genre}
                 </span>
-                <h2 className="text-2xl font-black text-white drop-shadow-md leading-tight">
+                <h2 className="text-2xl sm:text-3xl font-black text-white drop-shadow-md leading-tight">
                   {selectedGameDetails.title}
                 </h2>
-                <p className="text-xs text-slate-300">
-                  Por <strong className="text-white">@{selectedGameDetails.creator.username}</strong>
-                </p>
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <span>Por <strong className="text-white">@{selectedGameDetails.creator.username}</strong></span>
+                  <RobloxVerifiedBadge size={14} />
+                </div>
               </div>
             </div>
 
-            {/* Modal Body */}
+            {/* Modal Body & Tabs */}
             <div className="p-6 space-y-5 overflow-y-auto">
-              <p className="text-xs text-slate-300 leading-relaxed">
-                {selectedGameDetails.description}
-              </p>
-
-              {/* Stats Grid */}
-              <div className="grid grid-cols-3 gap-3 p-3 bg-[#111318] rounded-2xl border border-white/10 text-center text-xs">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Jogando</span>
-                  <strong className="text-white font-mono text-sm">
-                    {selectedGameDetails.playingCount.toLocaleString()}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Visitas</span>
-                  <strong className="text-white font-mono text-sm">
-                    {selectedGameDetails.visits.toLocaleString()}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Avaliação</span>
-                  <strong className="text-emerald-400 font-mono text-sm">
-                    {Math.round((selectedGameDetails.likes / (selectedGameDetails.likes + (selectedGameDetails.dislikes || 500))) * 100)}%
-                  </strong>
-                </div>
-              </div>
-
-              {/* Game passes if any */}
-              {selectedGameDetails.gamePasses && selectedGameDetails.gamePasses.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Game Passes da Experiência
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {selectedGameDetails.gamePasses.map(pass => (
-                      <div 
-                        key={pass.id}
-                        className="p-3 bg-[#111318] border border-white/10 rounded-xl flex items-center justify-between gap-2"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-xl">{pass.icon}</span>
-                          <div>
-                            <span className="text-xs font-bold text-white block">{pass.title}</span>
-                            <span className="text-[10px] text-slate-400">{pass.description}</span>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            if (onBuyGamePass) onBuyGamePass(selectedGameDetails, pass);
-                          }}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg text-xs font-black shrink-0 transition-colors cursor-pointer"
-                        >
-                          B$ {pass.price}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Guest reminder banner if user is a guest */}
-              {currentUser.isGuest && (
-                <div className="p-3.5 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex items-center justify-between gap-3 text-xs text-amber-200">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-xl">😄</span>
-                    <div className="leading-tight">
-                      <strong className="text-amber-300 block">Jogando como Visitante</strong>
-                      <span className="text-[11px] text-amber-200/80">Avatar Noob padrão. Chat e Blox Studio desativados.</span>
-                    </div>
-                  </div>
-                  {onOpenAuthModal && (
-                    <button
-                      onClick={() => {
-                        sounds.playClick();
-                        setSelectedGameDetails(null);
-                        onOpenAuthModal();
-                      }}
-                      className="bg-white hover:bg-slate-100 text-slate-900 font-black px-3 py-1.5 rounded-xl shrink-0 cursor-pointer text-xs shadow-md transition-all"
-                    >
-                      Criar Conta
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-3 pt-2">
+              {/* Play & Edit Row */}
+              <div className="flex items-center gap-3">
                 <button
                   onClick={() => {
                     sounds.playClick();
@@ -411,10 +393,10 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                     setSelectedGameDetails(null);
                     onPlayGame(target);
                   }}
-                  className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white py-4 rounded-2xl font-black text-sm tracking-wider shadow-xl shadow-emerald-500/25 flex items-center justify-center gap-2.5 cursor-pointer transition-all transform hover:scale-[1.01] active:scale-[0.99]"
+                  className="flex-1 bg-[#00b06f] hover:bg-[#00945e] text-white py-4 rounded-2xl font-black text-base tracking-wide shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2.5 cursor-pointer transition-all transform hover:scale-[1.01] active:scale-[0.99]"
                 >
-                  <Play className="w-5 h-5 fill-white" />
-                  <span>JOGAR AGORA</span>
+                  <Play className="w-6 h-6 fill-white" />
+                  <span>JOGAR</span>
                 </button>
 
                 {isGameCreator(selectedGameDetails) && !currentUser.isGuest && (
@@ -425,14 +407,106 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                       setSelectedGameDetails(null);
                       if (onEditGame) onEditGame(target);
                     }}
-                    className="px-5 py-4 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-lg"
-                    title="Editar experiência no Blox Studio"
+                    className="px-5 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-lg"
+                    title="Editar no Roblox Studio"
                   >
                     <Pencil className="w-4 h-4 text-black" />
-                    <span>Editar</span>
+                    <span>Editar no Studio</span>
                   </button>
                 )}
               </div>
+
+              {/* Detail Tabs: Sobre | Loja | Servidores */}
+              <div className="flex items-center gap-2 border-b border-white/10 pb-2 text-xs font-bold">
+                <button
+                  onClick={() => setActiveDetailTab('about')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                    activeDetailTab === 'about' ? 'bg-white/15 text-white font-black' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Sobre
+                </button>
+                <button
+                  onClick={() => setActiveDetailTab('store')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                    activeDetailTab === 'store' ? 'bg-white/15 text-white font-black' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Loja (Passes)
+                </button>
+              </div>
+
+              {/* Tab 1: Sobre */}
+              {activeDetailTab === 'about' && (
+                <div className="space-y-4">
+                  <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                    {selectedGameDetails.description}
+                  </p>
+
+                  {/* 2022 Experience Stats Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 bg-[#111216] rounded-2xl border border-white/10 text-center text-xs">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Ativos</span>
+                      <strong className="text-white font-mono text-sm">
+                        {selectedGameDetails.playingCount.toLocaleString()}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Visitas</span>
+                      <strong className="text-white font-mono text-sm">
+                        {selectedGameDetails.visits.toLocaleString()}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Avaliação</span>
+                      <strong className="text-emerald-400 font-mono text-sm">
+                        {Math.round((selectedGameDetails.likes / (selectedGameDetails.likes + (selectedGameDetails.dislikes || 200))) * 100)}%
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Gênero</span>
+                      <strong className="text-cyan-400 font-mono text-xs">
+                        {selectedGameDetails.genre}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 2: Loja (Game Passes in Robux) */}
+              {activeDetailTab === 'store' && (
+                <div className="space-y-3">
+                  {selectedGameDetails.gamePasses && selectedGameDetails.gamePasses.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {selectedGameDetails.gamePasses.map(pass => (
+                        <div 
+                          key={pass.id}
+                          className="p-3 bg-[#111216] border border-white/10 rounded-2xl flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-2xl">{pass.icon}</span>
+                            <div>
+                              <span className="text-xs font-bold text-white block">{pass.title}</span>
+                              <span className="text-[10px] text-slate-400">{pass.description}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (onBuyGamePass) onBuyGamePass(selectedGameDetails, pass);
+                            }}
+                            className="bg-[#00b06f] hover:bg-[#00945e] text-white px-3 py-1.5 rounded-xl text-xs font-black shrink-0 transition-colors cursor-pointer flex items-center gap-1 shadow-md"
+                          >
+                            <RobuxIcon size={12} color="#ffffff" />
+                            <span>{pass.price}</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 text-center py-4">Nenhum passe cadastrado para esta experiência.</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

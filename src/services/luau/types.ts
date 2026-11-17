@@ -31,7 +31,12 @@ export interface LuauExecutionContext {
   onRemovePart: (partId: string) => void;
   onLog: (entry: LuauLogEntry) => void;
   getPlayer?: () => {
+    isActive?: boolean;
     position: BloxVector3;
+    health?: number;
+    maxHealth?: number;
+    walkSpeed?: number;
+    jumpPower?: number;
     takeDamage: (amount: number) => void;
     heal: (amount: number) => void;
     setSpeed: (speed: number) => void;
@@ -39,6 +44,9 @@ export interface LuauExecutionContext {
     teleport: (pos: BloxVector3) => void;
     addCoins: (amount: number) => void;
   };
+  onRigMoveTo?: (rigPartId: string, targetPos: BloxVector3, walkSpeed?: number) => void;
+  onRigAttack?: (rigPartId: string) => void;
+  onRigDied?: (rigPartId: string) => void;
   onTouchEvent?: (partId: string, callback: (hit: any) => void) => () => void;
   onAddGui?: (gui: any) => void;
   onAddTool?: (tool: any) => void;

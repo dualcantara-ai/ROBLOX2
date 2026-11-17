@@ -22,7 +22,7 @@ export const GuestRestrictionModal: React.FC<GuestRestrictionModalProps> = ({
   const contentMap = {
     studio: {
       title: 'Criação de Jogos Bloqueada para Visitantes',
-      description: 'Como visitante, você só pode explorar e jogar experiências. Para construir seus próprios mundos 3D, programar scripts Luau e usar a IA Copilot no Blox Studio, faça login com seu email!',
+      description: 'Como visitante, você só pode explorar e jogar experiências. Para construir seus próprios mundos 3D, programar scripts Luau e usar o Zephyr AI no Blox Studio, faça login com seu email!',
       icon: <Wrench className="w-8 h-8 text-amber-400" />,
       badge: 'Blox Studio Exclusivo'
     },

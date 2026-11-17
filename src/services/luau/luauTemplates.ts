@@ -2,11 +2,227 @@ export interface ScriptTemplate {
   id: string;
   name: string;
   description: string;
-  category: 'Interação' | 'Animação' | 'Mecânica' | 'Criação';
+  category: 'Interação' | 'Animação' | 'Mecânica' | 'Criação' | 'IA / NPC';
   code: string;
 }
 
+export const RIG_CHASE_ATTACK_TEMPLATE = `-- Script de IA para Rig: Perseguir e Atacar Jogadores
+local rig = script.Parent
+local humanoid = rig:FindFirstChild("Humanoid")
+local root = rig:FindFirstChild("HumanoidRootPart") or rig
+local Players = game:GetService("Players")
+
+local velocidade = 12 -- Velocidade de perseguição do Rig
+local alcanceDeteccao = 50 -- Distância máxima para detectar jogadores
+local distanciaAtaque = 4.2 -- Distância para atacar o jogador
+local dano = 12 -- Pouco dano por ataque
+local cooldownAtaque = 1.0 -- Tempo (segundos) entre ataques
+
+if humanoid then
+    humanoid.WalkSpeed = velocidade
+end
+
+local ultimoAtaque = 0
+print("⚔️ IA Perseguidor ativada no Rig:", rig.Name)
+
+while true do
+    if not humanoid or humanoid.Health <= 0 then break end
+
+    local melhorAlvo = nil
+    local menorDist = alcanceDeteccao
+
+    for _, player in pairs(Players:GetPlayers()) do
+        local character = player.Character
+        if character then
+            local targetRoot = character:FindFirstChild("HumanoidRootPart")
+            local targetHum = character:FindFirstChild("Humanoid")
+            if targetRoot and targetHum and targetHum.Health > 0 then
+                local dist = (targetRoot.Position - root.Position).Magnitude
+                if dist < menorDist then
+                    menorDist = dist
+                    melhorAlvo = character
+                end
+            end
+        end
+    end
+
+    if melhorAlvo then
+        local targetRoot = melhorAlvo:FindFirstChild("HumanoidRootPart")
+        local targetHum = melhorAlvo:FindFirstChild("Humanoid")
+
+        if menorDist <= distanciaAtaque then
+            -- Para de caminhar ao entrar na distância de ataque
+            if humanoid then
+                humanoid:MoveTo(root.Position)
+            end
+            if targetHum then
+                local agora = tick()
+                if agora - ultimoAtaque >= cooldownAtaque then
+                    ultimoAtaque = agora
+                    targetHum:TakeDamage(dano)
+                    print("💥 " .. rig.Name .. " atacou " .. melhorAlvo.Name .. " (-" .. dano .. " HP)")
+                end
+            end
+        elseif humanoid and targetRoot then
+            humanoid:MoveTo(targetRoot.Position)
+        end
+    elseif humanoid then
+        humanoid:MoveTo(root.Position)
+    end
+
+    task.wait(0.1)
+end
+`;
+
+export const RIG_DROP_COIN_ON_DEATH_TEMPLATE = `-- Script de Recompensa ao Morrer: Dropar Moeda onde o inimigo morreu
+local rig = script.Parent
+local humanoid = rig:FindFirstChild("Humanoid")
+local root = rig:FindFirstChild("HumanoidRootPart") or rig
+
+local valorMoeda = 25
+
+if humanoid then
+    humanoid.Died:Connect(function()
+        local pos = root.Position
+        local moeda = Instance.new("Part")
+        moeda.Name = "MoedaDropada"
+        moeda.Type = "coin"
+        moeda.CoinValue = valorMoeda
+        moeda.Size = Vector3.new(1.6, 1.6, 0.4)
+        moeda.Color = Color3.fromRGB(251, 191, 36)
+        moeda.Material = Enum.Material.Neon
+        moeda.Anchored = true
+        moeda.CanCollide = false
+        moeda.Position = Vector3.new(pos.X, math.max(1.2, pos.Y - 1.2), pos.Z)
+        moeda.Parent = workspace
+
+        print("🪙 " .. rig.Name .. " morreu e deixou uma moeda de B$ " .. valorMoeda .. "!")
+    end)
+end
+`;
+
+export const RIG_SPAWN_PART_ON_DEATH_TEMPLATE = `-- Script ao Morrer: Criar uma Parte exatamente onde o inimigo morreu
+local rig = script.Parent
+local humanoid = rig:FindFirstChild("Humanoid")
+local root = rig:FindFirstChild("HumanoidRootPart") or rig
+
+if humanoid then
+    humanoid.Died:Connect(function()
+        local pos = root.Position
+        local parte = Instance.new("Part")
+        parte.Name = "Espolio_" .. rig.Name
+        parte.Size = Vector3.new(4, 1, 4)
+        parte.Color = Color3.fromRGB(56, 189, 248)
+        parte.Material = Enum.Material.Neon
+        parte.Anchored = true
+        parte.CanCollide = true
+        parte.Position = Vector3.new(pos.X, math.max(0.5, pos.Y - 2.2), pos.Z)
+        parte.Parent = workspace
+
+        parte.Touched:Connect(function(hit)
+            local hum = hit.Parent and hit.Parent:FindFirstChild("Humanoid")
+            if hum then
+                hum:AddCoins(15)
+                parte:Destroy()
+            end
+        end)
+
+        print("🧱 " .. rig.Name .. " morreu e criou uma parte no local!")
+    end)
+end
+`;
+
 export const LUAU_TEMPLATES: ScriptTemplate[] = [
+  {
+    id: 'rig-chase-attack',
+    name: 'Rig Perseguidor & Ataque (IA NPC)',
+    description: 'Faz o Rig perseguir o jogador mais próximo e atacar dando um pouco de dano',
+    category: 'IA / NPC',
+    code: RIG_CHASE_ATTACK_TEMPLATE
+  },
+  {
+    id: 'rig-death-drop-coin',
+    name: 'Rig: Dropar Moeda ao Morrer',
+    description: 'Conecta em humanoid.Died para deixar uma moeda coletável onde o inimigo morreu',
+    category: 'IA / NPC',
+    code: RIG_DROP_COIN_ON_DEATH_TEMPLATE
+  },
+  {
+    id: 'rig-death-spawn-part',
+    name: 'Rig: Criar Parte ao Morrer',
+    description: 'Conecta em humanoid.Died para criar uma nova parte na posição onde o inimigo morreu',
+    category: 'IA / NPC',
+    code: RIG_SPAWN_PART_ON_DEATH_TEMPLATE
+  },
+  {
+    id: 'rig-guard-patrol',
+    name: 'Rig Guarda de Área (Patrulha + Ataque)',
+    description: 'Protege a posição inicial, persegue invasores próximos e retorna ao posto',
+    category: 'IA / NPC',
+    code: `-- Script de Guarda de Área para Rig
+local rig = script.Parent
+local humanoid = rig:FindFirstChild("Humanoid")
+local root = rig:FindFirstChild("HumanoidRootPart") or rig
+local Players = game:GetService("Players")
+
+local postoInicial = Vector3.new(root.Position.X, root.Position.Y, root.Position.Z)
+local alcanceAlerta = 35
+local distanciaAtaque = 4.0
+local dano = 10
+local cooldown = 1.1
+local ultimoAtaque = 0
+
+if humanoid then
+    humanoid.WalkSpeed = 11
+end
+
+while true do
+    if not humanoid or humanoid.Health <= 0 then break end
+
+    local alvo = nil
+    local menorDist = alcanceAlerta
+
+    for _, player in pairs(Players:GetPlayers()) do
+        local char = player.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            local hum = char:FindFirstChild("Humanoid")
+            if hrp and hum and hum.Health > 0 then
+                local dist = (hrp.Position - root.Position).Magnitude
+                if dist < menorDist then
+                    menorDist = dist
+                    alvo = char
+                end
+            end
+        end
+    end
+
+    if alvo then
+        local hrp = alvo:FindFirstChild("HumanoidRootPart")
+        local hum = alvo:FindFirstChild("Humanoid")
+        if menorDist <= distanciaAtaque then
+            -- Para de caminhar ao entrar na distância para acertar o jogador
+            if humanoid then
+                humanoid:MoveTo(root.Position)
+            end
+            if hum and tick() - ultimoAtaque >= cooldown then
+                ultimoAtaque = tick()
+                hum:TakeDamage(dano)
+            end
+        elseif humanoid and hrp then
+            humanoid:MoveTo(hrp.Position)
+        end
+    elseif humanoid then
+        local distPosto = (postoInicial - root.Position).Magnitude
+        if distPosto > 2 then
+            humanoid:MoveTo(postoInicial)
+        end
+    end
+
+    task.wait(0.12)
+end
+`
+  },
   {
     id: 'lava-killbrick',
     name: 'Lava / Dano ao Tocar',

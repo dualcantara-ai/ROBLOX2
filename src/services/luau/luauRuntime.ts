@@ -12,6 +12,8 @@ export class LuauEngine {
   private runningScripts: Map<string, { cancel: () => void; isRunning: boolean }> = new Map();
   private touchListeners: Map<string, Set<(hit: any) => void>> = new Map();
   private clickListeners: Map<string, Set<(player: any) => void>> = new Map();
+  private rigDiedListeners: Map<string, Set<() => void>> = new Map();
+  private rigHealthChangedListeners: Map<string, Set<(hp: number) => void>> = new Map();
   public toolActivatedListeners: Map<string, Set<() => void>> = new Map();
   public guiClickListeners: Map<string, Set<() => void>> = new Map();
 
@@ -47,6 +49,39 @@ export class LuauEngine {
   }
 
   /**
+   * Checks whether the script has an 'end' keyword at the end of the script.
+   * When true, Roblox scripts repeat/re-execute when they finish executing.
+   */
+  public static hasEndAtEnd(source: string): boolean {
+    if (!source) return false;
+    // 1. Remove multiline comments --[[ ... ]]
+    const noBlock = source.replace(/--\[\[[\s\S]*?\]\]/g, '');
+    // 2. Remove line comments -- ...
+    const lines = noBlock.split('\n');
+    const validLines: string[] = [];
+    for (let rawLine of lines) {
+      const commentIdx = rawLine.indexOf('--');
+      let line = rawLine;
+      if (commentIdx !== -1) {
+        const before = rawLine.substring(0, commentIdx);
+        const quoteCount = (before.match(/"/g) || []).length + (before.match(/'/g) || []).length;
+        if (quoteCount % 2 === 0) {
+          line = before;
+        }
+      }
+      const trimmed = line.trim();
+      if (trimmed.length > 0) {
+        validLines.push(trimmed);
+      }
+    }
+    if (validLines.length === 0) return false;
+    const lastLine = validLines[validLines.length - 1];
+    // Check if the last line is 'end' or ends with 'end' (optionally with semicolon)
+    // Negative lookahead prevents matching 'end)' which is a callback parameter close
+    return /\bend\s*;?$/.test(lastLine);
+  }
+
+  /**
    * Transpile Luau code into asynchronous Javascript
    */
   public transpileLuau(source: string): string {
@@ -55,14 +90,84 @@ export class LuauEngine {
     // 1. Remove multiline comments --[[ ... ]]
     code = code.replace(/--\[\[[\s\S]*?\]\]/g, '');
 
+    // Helper: temporarily mask quoted string literals so operators inside strings (e.g. "...") aren't rewritten
+    const maskStrings = (input: string) => {
+      const literals: string[] = [];
+      const masked = input.replace(/(["'])(?:\\.|(?!\1).)*\1/g, (m) => {
+        const idx = literals.length;
+        literals.push(m);
+        return `__STR_LIT_${idx}__`;
+      });
+      return { masked, literals };
+    };
+
+    const unmaskStrings = (input: string, literals: string[]) =>
+      input.replace(/__STR_LIT_(\d+)__/g, (_, i) => literals[Number(i)] ?? '');
+
+    // 1b. Convert Luau array-style table literals `= { ... }` (without `=` keys inside) into JS arrays `[ ... ]`
+    {
+      const { masked, literals } = maskStrings(code);
+      const converted = masked.replace(/=\s*\{([^{}]*)\}/g, (full, inner) => {
+        // If there are key-value `ident =` assignments inside, keep as JS object literal
+        if (/(?:^|[,;\n\r\s])[A-Za-z_][A-Za-z0-9_]*\s*=/.test(inner)) {
+          return full;
+        }
+        return `= [${inner}]`;
+      });
+      code = unmaskStrings(converted, literals);
+    }
+
+    // Shared Luau expression normalizer for conditions, loop iterables, bounds, and statements
+    const normalizeExpr = (rawExpr: string): string => {
+      const { masked, literals } = maskStrings(rawExpr);
+      let expr = masked;
+
+      // Trim Luau type annotations like `: number`, `:: any`
+      expr = expr.replace(/:\s*([A-Za-z0-9_<>]+)(\s*=|\s*,|\s*\))/g, '$2');
+      expr = expr.replace(/::\s*[A-Za-z0-9_]+/g, '');
+
+      // Operators & keywords
+      expr = expr.replace(/~=/g, '!==');
+      expr = expr.replace(/\s*\.\.\s*/g, ' + ');
+      expr = expr.replace(/\bnil\b/g, 'null');
+      expr = expr.replace(/\band\b/g, '&&');
+      expr = expr.replace(/\bor\b/g, '||');
+      expr = expr.replace(/\bnot\s+/g, '!');
+      expr = expr.replace(/#([A-Za-z0-9_.]+)/g, '($1.length || 0)');
+
+      // Luau method calls :Method( -> .Method(
+      expr = expr.replace(/:([A-Za-z0-9_]+)\s*\(/g, '.$1(');
+
+      // task.wait(x) or wait(x) -> await task.wait(x)
+      expr = expr.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
+
+      // Vector3 subtraction/addition expressions
+      expr = expr.replace(/\(([A-Za-z0-9_.]+)\s*-\s*([A-Za-z0-9_.]+)\)\.(Magnitude|magnitude|Unit|unit)/g, '(__vecSub($1, $2)).$3');
+      expr = expr.replace(/\(([A-Za-z0-9_.]+)\s*\+\s*([A-Za-z0-9_.]+)\)\.(Magnitude|magnitude|Unit|unit)/g, '(__vecAdd($1, $2)).$3');
+      expr = expr.replace(/([A-Za-z0-9_.]+\.Position)\s*-\s*([A-Za-z0-9_.]+\.Position)/g, '__vecSub($1, $2)');
+      expr = expr.replace(/([A-Za-z0-9_.]+\.Position)\s*\+\s*([A-Za-z0-9_.]+\.Position)/g, '__vecAdd($1, $2)');
+      expr = expr.replace(/([A-Za-z0-9_.]+\.Position)\s*\+\s*(Vector3\.new\([^)]*\))/g, '__vecAdd($1, $2)');
+      expr = expr.replace(/([A-Za-z0-9_.]+\.Position)\s*-\s*(Vector3\.new\([^)]*\))/g, '__vecSub($1, $2)');
+      expr = expr.replace(/(Vector3\.new\([^)]*\))\s*\+\s*([A-Za-z0-9_.]+\.Position)/g, '__vecAdd($1, $2)');
+      expr = expr.replace(/([A-Za-z0-9_.]+\.Rotation)\s*\+\s*(Vector3\.new\([^)]*\))/g, '__vecAdd($1, $2)');
+      expr = expr.replace(/([A-Za-z0-9_.]+\.Rotation)\s*-\s*(Vector3\.new\([^)]*\))/g, '__vecSub($1, $2)');
+
+      // Math constants
+      expr = expr.replace(/\bmath\.huge\b/g, 'Infinity');
+      expr = expr.replace(/\bmath\.pi\b/g, 'Math.PI');
+
+      return unmaskStrings(expr, literals);
+    };
+
     // 2. Normalize line by line
     const lines = code.split('\n');
     const processedLines: string[] = [];
+    let blockDepth = 0;
 
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i];
 
-      // Remove single line comments
+      // Remove single line comments (ignoring `--` inside strings)
       const commentIdx = line.indexOf('--');
       if (commentIdx !== -1) {
         const before = line.substring(0, commentIdx);
@@ -77,69 +182,59 @@ export class LuauEngine {
         continue;
       }
 
-      // Trim Luau type annotations like `: number`, `: Part`, `: boolean`, `:: any`
-      line = line.replace(/:\s*([A-Za-z0-9_<>]+)(\s*=|\s*,|\s*\))/g, '$2');
-      line = line.replace(/::\s*[A-Za-z0-9_]+/g, '');
-
-      // Replace operators & keywords
-      line = line.replace(/~=/g, '!==');
-      line = line.replace(/\s*\.\.\s*/g, ' + ');
-      line = line.replace(/\bnil\b/g, 'null');
-
-      // Logical operators: and -> &&, or -> ||, not -> !
-      line = line.replace(/\band\b/g, '&&');
-      line = line.replace(/\bor\b/g, '||');
-      line = line.replace(/\bnot\s+/g, '!');
-
-      // Replace Luau table length #var with var.length
-      line = line.replace(/#([A-Za-z0-9_.]+)/g, '($1.length || 0)');
-
       // Inline statements: if cond then stmt end
       const inlineIfMatch = line.match(/^(\s*)if\s+(.+?)\s+then\s+(.+?)\s+end\s*;?$/);
       if (inlineIfMatch) {
-        let cond = inlineIfMatch[2].trim();
-        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
-        line = `${inlineIfMatch[1]}if (${cond}) { ${inlineIfMatch[3]}; }`;
-        processedLines.push(line);
+        const cond = normalizeExpr(inlineIfMatch[2].trim());
+        let stmt = normalizeExpr(inlineIfMatch[3].trim());
+        stmt = stmt.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\+=\s*(.+)$/, '$1 = __vecAdd($1, $2)');
+        stmt = stmt.replace(/([A-Za-z0-9_.]+\.Position)\s*=\s*\1\s*\+\s*(.+)$/, '$1 = __vecAdd($1, $2)');
+        processedLines.push(`${inlineIfMatch[1]}if (${cond}) { ${stmt}; }`);
         continue;
       }
 
       // Inline while: while cond do stmt end
       const inlineWhileMatch = line.match(/^(\s*)while\s+(.+?)\s+do\s+(.+?)\s+end\s*;?$/);
       if (inlineWhileMatch) {
-        let cond = inlineWhileMatch[2].trim();
-        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
-        line = `${inlineWhileMatch[1]}while (${cond}) { await __yieldCheck(); ${inlineWhileMatch[3]}; }`;
-        processedLines.push(line);
+        const cond = normalizeExpr(inlineWhileMatch[2].trim());
+        let stmt = normalizeExpr(inlineWhileMatch[3].trim());
+        stmt = stmt.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\+=\s*(.+)$/, '$1 = __vecAdd($1, $2)');
+        stmt = stmt.replace(/([A-Za-z0-9_.]+\.Position)\s*=\s*\1\s*\+\s*(.+)$/, '$1 = __vecAdd($1, $2)');
+        processedLines.push(`${inlineWhileMatch[1]}while (${cond}) { await __yieldCheck(); ${stmt}; }`);
         continue;
       }
 
-      // Loops and control flow
+      // Standalone do ... end
+      const doMatch = line.match(/^(\s*)do\s*$/);
+      if (doMatch) {
+        processedLines.push(`${doMatch[1]}{`);
+        blockDepth++;
+        continue;
+      }
+
       // while <cond> do -> while (<cond>) { await __yieldCheck();
       const whileMatch = line.match(/^(\s*)while\s+(.+)\s+do\s*$/);
       if (whileMatch) {
-        let cond = whileMatch[2].trim();
-        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
-        line = `${whileMatch[1]}while (${cond}) { await __yieldCheck();`;
-        processedLines.push(line);
+        const cond = normalizeExpr(whileMatch[2].trim());
+        processedLines.push(`${whileMatch[1]}while (${cond}) { await __yieldCheck();`);
+        blockDepth++;
         continue;
       }
 
       // repeat -> do { await __yieldCheck();
       const repeatMatch = line.match(/^(\s*)repeat\s*$/);
       if (repeatMatch) {
-        line = `${repeatMatch[1]}do { await __yieldCheck();`;
-        processedLines.push(line);
+        processedLines.push(`${repeatMatch[1]}do { await __yieldCheck();`);
+        blockDepth++;
         continue;
       }
 
       // until <cond> -> } while (!<cond>);
       const untilMatch = line.match(/^(\s*)until\s+(.+)\s*$/);
       if (untilMatch) {
-        let cond = untilMatch[2].trim();
-        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
-        line = `${untilMatch[1]}} while (!(${cond}));`;
-        processedLines.push(line);
+        const cond = normalizeExpr(untilMatch[2].trim());
+        processedLines.push(`${untilMatch[1]}} while (!(${cond}));`);
+        if (blockDepth > 0) blockDepth--;
         continue;
       }
 
@@ -148,11 +243,11 @@ export class LuauEngine {
       if (forNumMatch) {
         const indent = forNumMatch[1];
         const v = forNumMatch[2];
-        const start = forNumMatch[3].trim();
-        const finish = forNumMatch[4].trim();
-        const step = forNumMatch[5] ? forNumMatch[5].trim() : '1';
-        line = `${indent}for (let ${v} = ${start}; (${step}) >= 0 ? ${v} <= (${finish}) : ${v} >= (${finish}); ${v} += (${step})) { await __yieldCheck();`;
-        processedLines.push(line);
+        const start = normalizeExpr(forNumMatch[3].trim());
+        const finish = normalizeExpr(forNumMatch[4].trim());
+        const step = forNumMatch[5] ? normalizeExpr(forNumMatch[5].trim()) : '1';
+        processedLines.push(`${indent}for (let ${v} = ${start}; (${step}) >= 0 ? ${v} <= (${finish}) : ${v} >= (${finish}); ${v} += (${step})) { await __yieldCheck();`);
+        blockDepth++;
         continue;
       }
 
@@ -164,36 +259,33 @@ export class LuauEngine {
         const v = forInMatch[3] ? forInMatch[3] : forInMatch[2];
         let tbl = forInMatch[4].trim();
         tbl = tbl.replace(/^(?:pairs|ipairs)\((.+)\)$/, '$1');
-        line = `${indent}for (const [${k}, ${v}] of __iterate(${tbl})) { await __yieldCheck();`;
-        processedLines.push(line);
+        tbl = normalizeExpr(tbl);
+        processedLines.push(`${indent}for (const [${k}, ${v}] of __iterate(${tbl})) { await __yieldCheck();`);
+        blockDepth++;
         continue;
       }
 
       // if <cond> then
       const ifMatch = line.match(/^(\s*)if\s+(.+)\s+then\s*$/);
       if (ifMatch) {
-        let cond = ifMatch[2].trim();
-        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
-        line = `${ifMatch[1]}if (${cond}) {`;
-        processedLines.push(line);
+        const cond = normalizeExpr(ifMatch[2].trim());
+        processedLines.push(`${ifMatch[1]}if (${cond}) {`);
+        blockDepth++;
         continue;
       }
 
       // elseif <cond> then
       const elseifMatch = line.match(/^(\s*)elseif\s+(.+)\s+then\s*$/);
       if (elseifMatch) {
-        let cond = elseifMatch[2].trim();
-        cond = cond.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
-        line = `${elseifMatch[1]}} else if (${cond}) {`;
-        processedLines.push(line);
+        const cond = normalizeExpr(elseifMatch[2].trim());
+        processedLines.push(`${elseifMatch[1]}} else if (${cond}) {`);
         continue;
       }
 
       // else
       const elseMatch = line.match(/^(\s*)else\s*$/);
       if (elseMatch) {
-        line = `${elseMatch[1]}} else {`;
-        processedLines.push(line);
+        processedLines.push(`${elseMatch[1]}} else {`);
         continue;
       }
 
@@ -212,42 +304,57 @@ export class LuauEngine {
           line = `${indent}async function ${fname}(${fargs}) {`;
         }
         processedLines.push(line);
+        blockDepth++;
         continue;
+      }
+
+      // :Connect(function(x) ... ) or :connect(function(x) ... )
+      if (/:[Cc]onnect\s*\(\s*(?:async\s+)?function\s*\((.*?)\)/.test(line)) {
+        line = line.replace(/:[Cc]onnect\s*\(\s*(?:async\s+)?function\s*\((.*?)\)/g, '.Connect(async function($1) {');
+        blockDepth++;
+      } else if (/\bfunction\s*\((.*?)\)\s*$/.test(line)) {
+        // Trailing anonymous function e.g. task.spawn(function()
+        line = line.replace(/\bfunction\s*\((.*?)\)\s*$/, 'async function($1) {');
+        blockDepth++;
       }
 
       // end) -> });
       if (/^\s*end\s*\)\s*;?$/.test(line)) {
+        if (blockDepth > 0) blockDepth--;
         line = line.replace(/end\s*\)/, '})');
+        if (!line.endsWith(';')) line += ';';
         processedLines.push(line);
         continue;
       }
 
-      // end -> }
+      // end -> } or /* end */ if unmatched
       if (/^\s*end\s*;?$/.test(line)) {
-        line = line.replace(/end/, '}');
-        processedLines.push(line);
+        if (blockDepth > 0) {
+          blockDepth--;
+          line = line.replace(/end/, '}');
+          processedLines.push(line);
+        } else {
+          // Top-level unmatched 'end' - treat safely as script/loop terminator
+          processedLines.push('/* end */');
+        }
         continue;
       }
 
       // local var = val -> let var = val
       line = line.replace(/^(\s*)local\s+/g, '$1let ');
 
-      // task.wait(x) or wait(x) -> await task.wait(x)
-      line = line.replace(/(^|[^A-Za-z0-9_.])(task\.wait|wait)\s*\(/g, '$1await task.wait(');
-
-      // :Connect(function(x) ... )
-      line = line.replace(/:Connect\s*\(\s*function\s*\((.*?)\)/g, '.Connect(async function($1)');
-
-      // Replace Luau method invocations :Method( -> .Method(
-      line = line.replace(/:([A-Za-z0-9_]+)\s*\(/g, '.$1(');
+      // Normalize expressions, method calls, Vector3 math, and string safety
+      line = normalizeExpr(line);
 
       // Compound assignment operators: +=, -=, *=, /= on Vector3 / CFrame properties
+      line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\+=\s*([A-Za-z0-9_.]+)\s*\*\s*(.+)$/, '$1 = __vecAdd($1, __vecMul($2, $3))');
       line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\+=\s*(.+)$/, '$1 = __vecAdd($1, $2)');
       line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*-=\s*(.+)$/, '$1 = __vecSub($1, $2)');
       line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\*=\s*(.+)$/, '$1 = __vecMul($1, $2)');
       line = line.replace(/([A-Za-z0-9_.]+\.(?:Position|CFrame|Rotation|Orientation|Size))\s*\/=\s*(.+)$/, '$1 = __vecDiv($1, $2)');
 
       // Full assignment self-math: a.Position = a.Position + expr
+      line = line.replace(/([A-Za-z0-9_.]+\.Position)\s*=\s*\1\s*\+\s*([A-Za-z0-9_.]+)\s*\*\s*(.+)$/, '$1 = __vecAdd($1, __vecMul($2, $3))');
       line = line.replace(/([A-Za-z0-9_.]+\.Position)\s*=\s*\1\s*\+\s*(.+)$/, '$1 = __vecAdd($1, $2)');
       line = line.replace(/([A-Za-z0-9_.]+\.Position)\s*=\s*\1\s*-\s*(.+)$/, '$1 = __vecSub($1, $2)');
       line = line.replace(/([A-Za-z0-9_.]+\.Rotation)\s*=\s*\1\s*\+\s*(.+)$/, '$1 = __vecAdd($1, $2)');
@@ -257,18 +364,12 @@ export class LuauEngine {
       line = line.replace(/([A-Za-z0-9_.]+\.Size)\s*=\s*\1\s*\+\s*(.+)$/, '$1 = __vecAdd($1, $2)');
       line = line.replace(/([A-Za-z0-9_.]+\.Size)\s*=\s*\1\s*-\s*(.+)$/, '$1 = __vecSub($1, $2)');
 
-      // General Vector3.new addition/subtraction:
-      line = line.replace(/([A-Za-z0-9_.]+\.Position)\s*\+\s*(Vector3\.new\([^)]*\))/g, '__vecAdd($1, $2)');
-      line = line.replace(/([A-Za-z0-9_.]+\.Position)\s*-\s*(Vector3\.new\([^)]*\))/g, '__vecSub($1, $2)');
-      line = line.replace(/(Vector3\.new\([^)]*\))\s*\+\s*([A-Za-z0-9_.]+\.Position)/g, '__vecAdd($1, $2)');
-      line = line.replace(/([A-Za-z0-9_.]+\.Rotation)\s*\+\s*(Vector3\.new\([^)]*\))/g, '__vecAdd($1, $2)');
-      line = line.replace(/([A-Za-z0-9_.]+\.Rotation)\s*-\s*(Vector3\.new\([^)]*\))/g, '__vecSub($1, $2)');
-
-      // Math constants: math.huge -> Infinity, math.pi -> Math.PI
-      line = line.replace(/\bmath\.huge\b/g, 'Infinity');
-      line = line.replace(/\bmath\.pi\b/g, 'Math.PI');
-
       processedLines.push(line);
+    }
+
+    while (blockDepth > 0) {
+      processedLines.push('}');
+      blockDepth--;
     }
 
     return processedLines.join('\n');
@@ -298,30 +399,33 @@ export class LuauEngine {
       get Position(): any {
         const current = context.parts.find(p => p.id === partId);
         const pos = current ? current.position : part.position;
-        return {
-          x: pos.x,
-          y: pos.y,
-          z: pos.z,
-          X: pos.x,
-          Y: pos.y,
-          Z: pos.z,
-          add: (other: any) => ({
-            x: pos.x + (other?.x ?? other?.X ?? 0),
-            y: pos.y + (other?.y ?? other?.Y ?? 0),
-            z: pos.z + (other?.z ?? other?.Z ?? 0),
-            X: pos.x + (other?.x ?? other?.X ?? 0),
-            Y: pos.y + (other?.y ?? other?.Y ?? 0),
-            Z: pos.z + (other?.z ?? other?.Z ?? 0)
-          }),
-          sub: (other: any) => ({
-            x: pos.x - (other?.x ?? other?.X ?? 0),
-            y: pos.y - (other?.y ?? other?.Y ?? 0),
-            z: pos.z - (other?.z ?? other?.Z ?? 0),
-            X: pos.x - (other?.x ?? other?.X ?? 0),
-            Y: pos.y - (other?.y ?? other?.Y ?? 0),
-            Z: pos.z - (other?.z ?? other?.Z ?? 0)
-          })
-        };
+        const makeVec = (vx: number, vy: number, vz: number): any => ({
+          x: vx,
+          y: vy,
+          z: vz,
+          X: vx,
+          Y: vy,
+          Z: vz,
+          get Magnitude() { return Math.sqrt(vx * vx + vy * vy + vz * vz); },
+          get magnitude() { return Math.sqrt(vx * vx + vy * vy + vz * vz); },
+          get Unit() {
+            const m = Math.sqrt(vx * vx + vy * vy + vz * vz);
+            return m > 1e-6 ? makeVec(vx / m, vy / m, vz / m) : makeVec(0, 0, 0);
+          },
+          get unit() { return this.Unit; },
+          mul: (n: number) => makeVec(vx * n, vy * n, vz * n),
+          add: (other: any) => makeVec(
+            vx + (other?.x ?? other?.X ?? 0),
+            vy + (other?.y ?? other?.Y ?? 0),
+            vz + (other?.z ?? other?.Z ?? 0)
+          ),
+          sub: (other: any) => makeVec(
+            vx - (other?.x ?? other?.X ?? 0),
+            vy - (other?.y ?? other?.Y ?? 0),
+            vz - (other?.z ?? other?.Z ?? 0)
+          )
+        });
+        return makeVec(pos.x, pos.y, pos.z);
       },
       set Position(val: any) {
         if (!val) return;
@@ -329,6 +433,7 @@ export class LuauEngine {
         const y = Number(val.y ?? val.Y ?? 0);
         const z = Number(val.z ?? val.Z ?? 0);
         if (isNaN(x) || isNaN(y) || isNaN(z)) return;
+        part.position = { x, y, z };
         context.onUpdatePart(partId, { position: { x, y, z } });
       },
 
@@ -371,6 +476,7 @@ export class LuauEngine {
         const x = Math.max(0.1, Number(val.x ?? val.X ?? 1));
         const y = Math.max(0.1, Number(val.y ?? val.Y ?? 1));
         const z = Math.max(0.1, Number(val.z ?? val.Z ?? 1));
+        part.size = { x, y, z };
         context.onUpdatePart(partId, { size: { x, y, z } });
       },
 
@@ -391,6 +497,7 @@ export class LuauEngine {
         const x = Number(val.x ?? val.X ?? 0);
         const y = Number(val.y ?? val.Y ?? 0);
         const z = Number(val.z ?? val.Z ?? 0);
+        part.rotation = { x, y, z };
         context.onUpdatePart(partId, { rotation: { x, y, z } });
       },
 
@@ -399,6 +506,30 @@ export class LuauEngine {
       },
       set Orientation(val: any) {
         this.Rotation = val;
+      },
+
+      get Velocity(): any {
+        return this.AssemblyLinearVelocity;
+      },
+      set Velocity(val: any) {
+        this.AssemblyLinearVelocity = val;
+      },
+
+      get AssemblyLinearVelocity(): any {
+        const current = context.parts.find(p => p.id === partId);
+        const vel = current?.velocity || part.velocity || { x: 0, y: 0, z: 0 };
+        return {
+          x: vel.x, y: vel.y, z: vel.z,
+          X: vel.x, Y: vel.y, Z: vel.z
+        };
+      },
+      set AssemblyLinearVelocity(val: any) {
+        if (!val) return;
+        const x = Number(val.x ?? val.X ?? 0);
+        const y = Number(val.y ?? val.Y ?? 0);
+        const z = Number(val.z ?? val.Z ?? 0);
+        part.velocity = { x, y, z };
+        context.onUpdatePart(partId, { velocity: { x, y, z } });
       },
 
       get Color(): any {
@@ -417,6 +548,7 @@ export class LuauEngine {
       },
       set Color(val: any) {
         const parsed = LuauEngine.parseColor(val);
+        part.color = parsed.hex;
         context.onUpdatePart(partId, { color: parsed.hex });
       },
 
@@ -433,6 +565,7 @@ export class LuauEngine {
       },
       set Transparency(val: number) {
         const num = Math.max(0, Math.min(1, Number(val) || 0));
+        part.transparency = num;
         context.onUpdatePart(partId, { transparency: num });
       },
 
@@ -441,7 +574,9 @@ export class LuauEngine {
         return current ? current.canCollide : part.canCollide;
       },
       set CanCollide(val: boolean) {
-        context.onUpdatePart(partId, { canCollide: Boolean(val) });
+        const b = Boolean(val);
+        part.canCollide = b;
+        context.onUpdatePart(partId, { canCollide: b });
       },
 
       get Anchored(): boolean {
@@ -449,7 +584,10 @@ export class LuauEngine {
         return current ? current.anchored : part.anchored;
       },
       set Anchored(val: boolean) {
-        context.onUpdatePart(partId, { anchored: Boolean(val), isAnchored: Boolean(val) });
+        const b = Boolean(val);
+        part.anchored = b;
+        part.isAnchored = b;
+        context.onUpdatePart(partId, { anchored: b, isAnchored: b });
       },
 
       get Material(): string {
@@ -460,9 +598,51 @@ export class LuauEngine {
         const valid = ['plastic', 'neon', 'metal', 'glass', 'wood', 'brick', 'forcefield'];
         const str = String(val).toLowerCase();
         if (valid.includes(str)) {
+          part.material = str as any;
           context.onUpdatePart(partId, { material: str as any });
         }
       },
+
+      get Type(): string {
+        const current = context.parts.find(p => p.id === partId);
+        return current ? current.type : part.type;
+      },
+      set Type(val: string) {
+        const str = String(val || 'block').toLowerCase() as any;
+        part.type = str;
+        context.onUpdatePart(partId, { type: str });
+      },
+      get type(): string { return this.Type; },
+      set type(v: string) { this.Type = v; },
+
+      get Shape(): string {
+        const current = context.parts.find(p => p.id === partId);
+        return current ? current.type : part.type;
+      },
+      set Shape(val: string) {
+        const lower = String(val || 'block').toLowerCase();
+        const mapped = lower === 'ball' || lower === 'sphere' ? 'sphere'
+          : lower === 'cylinder' ? 'cylinder'
+          : lower === 'wedge' ? 'wedge'
+          : lower === 'coin' ? 'coin'
+          : 'block';
+        part.type = mapped as any;
+        context.onUpdatePart(partId, { type: mapped as any });
+      },
+      get shape(): string { return this.Shape; },
+      set shape(v: string) { this.Shape = v; },
+
+      get CoinValue(): number {
+        const current = context.parts.find(p => p.id === partId);
+        return current?.coinValue ?? part.coinValue ?? 25;
+      },
+      set CoinValue(val: number) {
+        const n = Math.max(1, Number(val) || 25);
+        part.coinValue = n;
+        context.onUpdatePart(partId, { coinValue: n });
+      },
+      get coinValue(): number { return this.CoinValue; },
+      set coinValue(v: number) { this.CoinValue = v; },
 
       // Touched Event
       Touched: {
@@ -476,6 +656,9 @@ export class LuauEngine {
               self.touchListeners.get(partId)?.delete(callback);
             }
           };
+        },
+        connect: (callback: (hit: any) => void) => {
+          return proxy.Touched.Connect(callback);
         }
       },
 
@@ -485,6 +668,9 @@ export class LuauEngine {
           return {
             Disconnect: () => {}
           };
+        },
+        connect: (callback: (hit: any) => void) => {
+          return proxy.TouchEnded.Connect(callback);
         }
       },
 
@@ -501,6 +687,9 @@ export class LuauEngine {
                 self.clickListeners.get(partId)?.delete(callback);
               }
             };
+          },
+          connect: (callback: (player: any) => void) => {
+            return proxy.ClickDetector.MouseClick.Connect(callback);
           }
         }
       },
@@ -518,15 +707,24 @@ export class LuauEngine {
                 self.clickListeners.get(partId)?.delete(callback);
               }
             };
+          },
+          connect: (callback: (player: any) => void) => {
+            return proxy.ProximityPrompt.Triggered.Connect(callback);
           }
         }
       },
 
       FindFirstChild: (childName: string) => {
-        const lower = childName.toLowerCase();
+        const lower = String(childName || '').toLowerCase();
         if (lower === 'clickdetector') return proxy.ClickDetector;
         if (lower === 'proximityprompt') return proxy.ProximityPrompt;
-        const current = context.parts.find(p => p.id === partId);
+        const current = context.parts.find(p => p.id === partId) || part;
+        if (current.type === 'rig' || current.type === 'npc') {
+          if (lower === 'humanoid') return proxy.Humanoid;
+          if (lower === 'humanoidrootpart' || lower === 'torso' || lower === 'primarypart' || lower === 'head' || lower === 'left arm' || lower === 'right arm') {
+            return proxy;
+          }
+        }
         if (current?.textures) {
           const foundTex = current.textures.find(t => t.name.toLowerCase() === lower);
           if (foundTex) return foundTex;
@@ -534,6 +732,15 @@ export class LuauEngine {
         if (current?.weldConstraints) {
           const foundWeld = current.weldConstraints.find(w => w.name.toLowerCase() === lower);
           if (foundWeld) return foundWeld;
+        }
+        return null;
+      },
+
+      FindFirstChildOfClass: (className: string) => {
+        const lower = String(className || '').toLowerCase();
+        const current = context.parts.find(p => p.id === partId) || part;
+        if ((current.type === 'rig' || current.type === 'npc') && lower === 'humanoid') {
+          return proxy.Humanoid;
         }
         return null;
       },
@@ -571,19 +778,74 @@ export class LuauEngine {
       get Parent(): any {
         return {
           Name: 'Workspace',
+          name: 'Workspace',
           FindFirstChild: (childName: string) => {
+            const found = context.parts.find(p => p.name.toLowerCase() === childName.toLowerCase());
+            return found ? self.createPartProxy(found, context) : null;
+          },
+          findFirstChild: (childName: string) => {
+            const found = context.parts.find(p => p.name.toLowerCase() === childName.toLowerCase());
+            return found ? self.createPartProxy(found, context) : null;
+          },
+          WaitForChild: async (childName: string) => {
+            const found = context.parts.find(p => p.name.toLowerCase() === childName.toLowerCase());
+            return found ? self.createPartProxy(found, context) : null;
+          },
+          waitForChild: async (childName: string) => {
             const found = context.parts.find(p => p.name.toLowerCase() === childName.toLowerCase());
             return found ? self.createPartProxy(found, context) : null;
           },
           GetChildren: () => {
             return context.parts.map(p => self.createPartProxy(p, context));
+          },
+          getChildren: () => {
+            return context.parts.map(p => self.createPartProxy(p, context));
           }
         };
       },
+      set Parent(val: any) {
+        if (val === null || val === undefined) {
+          context.onRemovePart(partId);
+        }
+      },
+
+      get parent(): any { return this.Parent; },
+      set parent(val: any) { this.Parent = val; },
+      get position(): any { return this.Position; },
+      set position(v: any) { this.Position = v; },
+      get rotation(): any { return this.Rotation; },
+      set rotation(v: any) { this.Rotation = v; },
+      get orientation(): any { return this.Orientation; },
+      set orientation(v: any) { this.Orientation = v; },
+      get size(): any { return this.Size; },
+      set size(v: any) { this.Size = v; },
+      get color(): any { return this.Color; },
+      set color(v: any) { this.Color = v; },
+      get brickColor(): any { return this.BrickColor; },
+      set brickColor(v: any) { this.BrickColor = v; },
+      get transparency(): number { return this.Transparency; },
+      set transparency(v: number) { this.Transparency = v; },
+      get canCollide(): boolean { return this.CanCollide; },
+      set canCollide(v: boolean) { this.CanCollide = v; },
+      get anchored(): boolean { return this.Anchored; },
+      set anchored(v: boolean) { this.Anchored = v; },
+      get material(): string { return this.Material; },
+      set material(v: string) { this.Material = v; },
+      get touched(): any { return this.Touched; },
+      get touchEnded(): any { return this.TouchEnded; },
+      findFirstChild: (cName: string) => proxy.FindFirstChild(cName),
+      findFirstChildOfClass: (cName: string) => proxy.FindFirstChildOfClass(cName),
+      waitForChild: async (cName: string) => proxy.WaitForChild(cName),
+      getChildren: () => proxy.GetChildren(),
+      destroy: () => proxy.Destroy(),
+      clone: () => proxy.Clone(),
+      isA: (cName: string) => proxy.IsA(cName),
+      getAttribute: (attr: string) => proxy.GetAttribute(attr),
+      setAttribute: (attr: string, val: any) => proxy.SetAttribute(attr, val),
 
       IsA: (cName: string) => {
         const lower = String(cName).toLowerCase();
-        return lower === 'instance' || lower === 'basepart' || lower === 'part' || (proxy.className?.toLowerCase() === lower);
+        return lower === 'instance' || lower === 'basepart' || lower === 'part' || lower === 'model' || (proxy.className?.toLowerCase() === lower);
       },
 
       GetAttribute: (attrName: string) => {
@@ -598,7 +860,187 @@ export class LuauEngine {
       }
     };
 
+    if (part.type === 'rig' || part.type === 'npc') {
+      const rigHumanoid: any = {
+        Name: 'Humanoid',
+        className: 'Humanoid',
+        get WalkSpeed() {
+          const current = context.parts.find(p => p.id === partId) || part;
+          return Number(current.attributes?.WalkSpeed ?? 12);
+        },
+        set WalkSpeed(v: number) {
+          const current = context.parts.find(p => p.id === partId) || part;
+          const num = Math.max(0, Number(v) || 0);
+          context.onUpdatePart(partId, { attributes: { ...(current.attributes || {}), WalkSpeed: num } });
+        },
+        get JumpPower() {
+          const current = context.parts.find(p => p.id === partId) || part;
+          return Number(current.attributes?.JumpPower ?? 50);
+        },
+        set JumpPower(v: number) {
+          const current = context.parts.find(p => p.id === partId) || part;
+          const num = Math.max(0, Number(v) || 0);
+          context.onUpdatePart(partId, { attributes: { ...(current.attributes || {}), JumpPower: num } });
+        },
+        get MaxHealth() {
+          const current = context.parts.find(p => p.id === partId) || part;
+          return Number(current.attributes?.MaxHealth ?? 100);
+        },
+        set MaxHealth(v: number) {
+          const current = context.parts.find(p => p.id === partId) || part;
+          const num = Math.max(1, Number(v) || 100);
+          context.onUpdatePart(partId, { attributes: { ...(current.attributes || {}), MaxHealth: num } });
+        },
+        get Health() {
+          const current = context.parts.find(p => p.id === partId) || part;
+          return Number(current.attributes?.Health ?? current.attributes?.MaxHealth ?? 100);
+        },
+        set Health(v: number) {
+          const current = context.parts.find(p => p.id === partId) || part;
+          const maxHp = Number(current.attributes?.MaxHealth ?? 100);
+          const prevHp = Number(current.attributes?.Health ?? maxHp);
+          const num = Math.max(0, Math.min(maxHp, Number(v) || 0));
+          context.onUpdatePart(partId, { attributes: { ...(current.attributes || {}), Health: num } });
+          if (num !== prevHp) {
+            self.notifyRigHealthChanged(partId, prevHp, num, context.onRigDied);
+          }
+        },
+        MoveTo: (targetPos: any) => {
+          if (!targetPos) return;
+          const tx = Number(targetPos.x ?? targetPos.X ?? targetPos.Position?.x ?? 0);
+          const ty = Number(targetPos.y ?? targetPos.Y ?? targetPos.Position?.y ?? 0);
+          const tz = Number(targetPos.z ?? targetPos.Z ?? targetPos.Position?.z ?? 0);
+          if (isNaN(tx) || isNaN(ty) || isNaN(tz)) return;
+          if (context.onRigMoveTo) {
+            context.onRigMoveTo(partId, { x: tx, y: ty, z: tz }, rigHumanoid.WalkSpeed);
+          }
+        },
+        moveTo: (targetPos: any) => rigHumanoid.MoveTo(targetPos),
+        TakeDamage: (dmg: number) => {
+          const cur = rigHumanoid.Health;
+          rigHumanoid.Health = Math.max(0, cur - (Number(dmg) || 0));
+        },
+        takeDamage: (dmg: number) => rigHumanoid.TakeDamage(dmg),
+        Died: {
+          Connect: (cb: () => void) => {
+            if (!self.rigDiedListeners.has(partId)) {
+              self.rigDiedListeners.set(partId, new Set());
+            }
+            self.rigDiedListeners.get(partId)!.add(cb);
+            return {
+              Disconnect: () => {
+                self.rigDiedListeners.get(partId)?.delete(cb);
+              }
+            };
+          },
+          connect: (cb: () => void) => rigHumanoid.Died.Connect(cb),
+          Once: (cb: () => void) => {
+            const conn = rigHumanoid.Died.Connect(() => {
+              conn.Disconnect();
+              cb();
+            });
+            return conn;
+          },
+          once: (cb: () => void) => rigHumanoid.Died.Once(cb)
+        },
+        HealthChanged: {
+          Connect: (cb: (hp: number) => void) => {
+            if (!self.rigHealthChangedListeners.has(partId)) {
+              self.rigHealthChangedListeners.set(partId, new Set());
+            }
+            self.rigHealthChangedListeners.get(partId)!.add(cb);
+            return {
+              Disconnect: () => {
+                self.rigHealthChangedListeners.get(partId)?.delete(cb);
+              }
+            };
+          },
+          connect: (cb: (hp: number) => void) => rigHumanoid.HealthChanged.Connect(cb)
+        },
+        Attack: (targetHumanoid?: any, dmg: number = 10) => {
+          if (context.onRigAttack) context.onRigAttack(partId);
+          if (targetHumanoid && typeof targetHumanoid.TakeDamage === 'function') {
+            targetHumanoid.TakeDamage(dmg);
+          }
+        },
+        Parent: proxy
+      };
+
+      proxy.Humanoid = rigHumanoid;
+      proxy.PrimaryPart = proxy;
+      proxy.HumanoidRootPart = proxy;
+      proxy.Torso = proxy;
+      proxy.Head = {
+        get Position() {
+          const p = proxy.Position;
+          return { ...p, y: p.y + 1.8, Y: p.y + 1.8 };
+        }
+      };
+      proxy.MoveTo = (targetPos: any) => rigHumanoid.MoveTo(targetPos);
+      proxy.moveTo = (targetPos: any) => rigHumanoid.MoveTo(targetPos);
+      proxy.PivotTo = (cf: any) => { proxy.CFrame = cf; };
+      proxy.SetPrimaryPartCFrame = (cf: any) => { proxy.CFrame = cf; };
+      proxy.Attack = (targetHumanoid?: any, dmg?: number) => rigHumanoid.Attack(targetHumanoid, dmg);
+    }
+
     return proxy;
+  }
+
+  /**
+   * Notifies Rig Humanoid.HealthChanged and Humanoid.Died listeners on health transition
+   */
+  public notifyRigHealthChanged(
+    partId: string,
+    prevHp: number,
+    newHp: number,
+    onRigDied?: (rigPartId: string) => void
+  ) {
+    const hc = this.rigHealthChangedListeners.get(partId);
+    if (hc && hc.size > 0) {
+      hc.forEach(cb => {
+        try {
+          cb(newHp);
+        } catch (err: any) {
+          console.error('Error in Rig HealthChanged listener:', err);
+        }
+      });
+    }
+    if (prevHp > 0 && newHp <= 0) {
+      if (onRigDied) onRigDied(partId);
+      const died = this.rigDiedListeners.get(partId);
+      if (died && died.size > 0) {
+        died.forEach(cb => {
+          try {
+            cb();
+          } catch (err: any) {
+            console.error('Error in Rig Died listener:', err);
+          }
+        });
+      }
+    }
+  }
+
+  /**
+   * Applies damage to an NPC / World Rig and fires HealthChanged + Died events cleanly
+   */
+  public damageRig(
+    partId: string,
+    dmg: number,
+    parts: BloxPart[],
+    onUpdatePart: (id: string, partial: Partial<BloxPart>) => void,
+    onRigDied?: (rigPartId: string) => void
+  ): { newHealth: number; died: boolean } {
+    const target = parts.find(p => p.id === partId);
+    if (!target) return { newHealth: 0, died: false };
+    const maxHp = Number(target.attributes?.MaxHealth ?? 100);
+    const prevHp = Number(target.attributes?.Health ?? maxHp);
+    if (prevHp <= 0) return { newHealth: 0, died: false };
+    const nextHp = Math.max(0, prevHp - Math.max(0, Number(dmg) || 0));
+    const nextAttrs = { ...(target.attributes || {}), Health: nextHp };
+    target.attributes = nextAttrs;
+    onUpdatePart(partId, { attributes: nextAttrs });
+    this.notifyRigHealthChanged(partId, prevHp, nextHp, onRigDied);
+    return { newHealth: nextHp, died: nextHp <= 0 };
   }
 
   /**
@@ -757,32 +1199,53 @@ export class LuauEngine {
     };
 
     // Vector3
-    const Vector3 = {
-      new: (x = 0, y = 0, z = 0) => ({
-        x: Number(x) || 0,
-        y: Number(y) || 0,
-        z: Number(z) || 0,
-        X: Number(x) || 0,
-        Y: Number(y) || 0,
-        Z: Number(z) || 0,
-        add: function(other: any) {
-          return Vector3.new(this.x + (other?.x ?? other?.X ?? 0), this.y + (other?.y ?? other?.Y ?? 0), this.z + (other?.z ?? other?.Z ?? 0));
-        },
-        sub: function(other: any) {
-          return Vector3.new(this.x - (other?.x ?? other?.X ?? 0), this.y - (other?.y ?? other?.Y ?? 0), this.z - (other?.z ?? other?.Z ?? 0));
-        },
-        mul: function(n: number) {
-          return Vector3.new(this.x * n, this.y * n, this.z * n);
-        },
-        get magnitude() {
-          return Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
-        }
-      }),
-      zero: { x: 0, y: 0, z: 0, X: 0, Y: 0, Z: 0 },
-      one: { x: 1, y: 1, z: 1, X: 1, Y: 1, Z: 1 },
-      xAxis: { x: 1, y: 0, z: 0, X: 1, Y: 0, Z: 0 },
-      yAxis: { x: 0, y: 1, z: 0, X: 0, Y: 1, Z: 0 },
-      zAxis: { x: 0, y: 0, z: 1, X: 0, Y: 0, Z: 1 }
+    const Vector3: any = {
+      new: (x = 0, y = 0, z = 0) => {
+        const nx = Number(x) || 0;
+        const ny = Number(y) || 0;
+        const nz = Number(z) || 0;
+        return {
+          x: nx,
+          y: ny,
+          z: nz,
+          X: nx,
+          Y: ny,
+          Z: nz,
+          add: function(other: any) {
+            return Vector3.new(nx + (other?.x ?? other?.X ?? 0), ny + (other?.y ?? other?.Y ?? 0), nz + (other?.z ?? other?.Z ?? 0));
+          },
+          sub: function(other: any) {
+            return Vector3.new(nx - (other?.x ?? other?.X ?? 0), ny - (other?.y ?? other?.Y ?? 0), nz - (other?.z ?? other?.Z ?? 0));
+          },
+          mul: function(n: number) {
+            return Vector3.new(nx * n, ny * n, nz * n);
+          },
+          Lerp: function(goal: any, alpha: number) {
+            const gx = Number(goal?.x ?? goal?.X ?? 0);
+            const gy = Number(goal?.y ?? goal?.Y ?? 0);
+            const gz = Number(goal?.z ?? goal?.Z ?? 0);
+            return Vector3.new(nx + (gx - nx) * alpha, ny + (gy - ny) * alpha, nz + (gz - nz) * alpha);
+          },
+          get Magnitude() {
+            return Math.sqrt(nx * nx + ny * ny + nz * nz);
+          },
+          get magnitude() {
+            return Math.sqrt(nx * nx + ny * ny + nz * nz);
+          },
+          get Unit() {
+            const mag = Math.sqrt(nx * nx + ny * ny + nz * nz);
+            return mag > 1e-6 ? Vector3.new(nx / mag, ny / mag, nz / mag) : Vector3.new(0, 0, 0);
+          },
+          get unit() {
+            return this.Unit;
+          }
+        };
+      },
+      zero: { x: 0, y: 0, z: 0, X: 0, Y: 0, Z: 0, Magnitude: 0, magnitude: 0 },
+      one: { x: 1, y: 1, z: 1, X: 1, Y: 1, Z: 1, Magnitude: Math.sqrt(3), magnitude: Math.sqrt(3) },
+      xAxis: { x: 1, y: 0, z: 0, X: 1, Y: 0, Z: 0, Magnitude: 1, magnitude: 1 },
+      yAxis: { x: 0, y: 1, z: 0, X: 0, Y: 1, Z: 0, Magnitude: 1, magnitude: 1 },
+      zAxis: { x: 0, y: 0, z: 1, X: 0, Y: 0, Z: 1, Magnitude: 1, magnitude: 1 }
     };
 
     const __vecAdd = (a: any, b: any) => {
@@ -1058,21 +1521,144 @@ export class LuauEngine {
         ClockTime: 14,
         Ambient: '#ffffff'
       },
-      Players: {
-        LocalPlayer: {
-          Name: 'LocalPlayer',
-          Character: {
-            Humanoid: {
-              Health: 100,
-              WalkSpeed: 16,
-              JumpPower: 32,
-              TakeDamage: (dmg: number) => {
-                if (context.getPlayer) context.getPlayer().takeDamage(dmg);
-              }
+      Players: (() => {
+        const liveHumanoid: any = {
+          Name: 'Humanoid',
+          className: 'Humanoid',
+          get Health() {
+            const p = context.getPlayer?.();
+            return p?.health ?? 100;
+          },
+          set Health(v: number) {
+            const p = context.getPlayer?.();
+            if (!p) return;
+            const cur = p.health ?? 100;
+            const target = Number(v) || 0;
+            if (target < cur) p.takeDamage(cur - target);
+            else if (target > cur) p.heal(target - cur);
+          },
+          get MaxHealth() {
+            const p = context.getPlayer?.();
+            return p?.maxHealth ?? 100;
+          },
+          get WalkSpeed() {
+            const p = context.getPlayer?.();
+            return p?.walkSpeed ?? 16;
+          },
+          set WalkSpeed(v: number) {
+            context.getPlayer?.()?.setSpeed(Number(v) || 16);
+          },
+          get JumpPower() {
+            const p = context.getPlayer?.();
+            return p?.jumpPower ?? 50;
+          },
+          set JumpPower(v: number) {
+            context.getPlayer?.()?.setJumpPower(Number(v) || 50);
+          },
+          TakeDamage: (dmg: number) => {
+            if (context.onRigAttack && context.parentPart && (context.parentPart.type === 'rig' || context.parentPart.type === 'npc')) {
+              context.onRigAttack(context.parentPart.id);
             }
+            if (context.getPlayer) context.getPlayer().takeDamage(dmg);
+          },
+          takeDamage: (dmg: number) => liveHumanoid.TakeDamage(dmg),
+          Heal: (amt: number) => {
+            if (context.getPlayer) context.getPlayer().heal(amt);
+          },
+          heal: (amt: number) => liveHumanoid.Heal(amt),
+          AddCoins: (amt: number) => {
+            if (context.getPlayer) context.getPlayer().addCoins(amt);
+          },
+          addCoins: (amt: number) => liveHumanoid.AddCoins(amt),
+          IsA: (cls: string) => String(cls).toLowerCase() === 'humanoid',
+          isA: (cls: string) => String(cls).toLowerCase() === 'humanoid'
+        };
+
+        const makeRootPartProxy = (yOffset: number) => ({
+          Name: yOffset > 4 ? 'Head' : 'HumanoidRootPart',
+          className: 'Part',
+          get Position() {
+            const pos = context.getPlayer?.()?.position || { x: 0, y: 0, z: 0 };
+            return Vector3.new(pos.x, pos.y + yOffset, pos.z);
+          },
+          set Position(val: any) {
+            if (!val) return;
+            const x = Number(val.x ?? val.X ?? 0);
+            const y = Number(val.y ?? val.Y ?? 0);
+            const z = Number(val.z ?? val.Z ?? 0);
+            if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+              context.getPlayer?.()?.teleport({ x, y: Math.max(0, y - yOffset), z });
+            }
+          },
+          get position() { return this.Position; },
+          set position(val: any) { this.Position = val; },
+          get CFrame() {
+            const pos = this.Position;
+            return { Position: pos, p: pos, X: pos.x, Y: pos.y, Z: pos.z };
+          },
+          set CFrame(val: any) {
+            if (!val) return;
+            const p = val.Position || val.p || val;
+            this.Position = p;
           }
-        }
-      },
+        });
+
+        const hrpProxy = makeRootPartProxy(2.75);
+        const headProxy = makeRootPartProxy(4.7);
+
+        const liveCharacter: any = {
+          Name: 'LocalPlayer',
+          className: 'Model',
+          Parent: workspaceObj,
+          PrimaryPart: hrpProxy,
+          HumanoidRootPart: hrpProxy,
+          Torso: hrpProxy,
+          Head: headProxy,
+          Humanoid: liveHumanoid,
+          get Position() { return hrpProxy.Position; },
+          FindFirstChild: (childName: string) => {
+            const lower = String(childName || '').toLowerCase();
+            if (lower === 'humanoid') return liveHumanoid;
+            if (lower === 'humanoidrootpart' || lower === 'torso' || lower === 'primarypart') return hrpProxy;
+            if (lower === 'head') return headProxy;
+            return null;
+          },
+          findFirstChild: (c: string) => liveCharacter.FindFirstChild(c),
+          FindFirstChildOfClass: (cls: string) => {
+            if (String(cls || '').toLowerCase() === 'humanoid') return liveHumanoid;
+            return null;
+          },
+          WaitForChild: async (c: string) => liveCharacter.FindFirstChild(c)
+        };
+
+        const localPlayerProxy: any = {
+          Name: 'LocalPlayer',
+          UserId: 1,
+          get Character() {
+            const p = context.getPlayer?.();
+            if (!p || p.isActive === false) return null;
+            return liveCharacter;
+          },
+          CharacterAdded: { Connect: (_cb: any) => ({ Disconnect: () => {} }) }
+        };
+
+        return {
+          LocalPlayer: localPlayerProxy,
+          GetPlayerFromCharacter: (char: any) => (char ? localPlayerProxy : null),
+          GetPlayers: () => {
+            const p = context.getPlayer?.();
+            if (!p || p.isActive === false) return [];
+            return [localPlayerProxy];
+          },
+          PlayerAdded: { Connect: (_cb: any) => ({ Disconnect: () => {} }), connect: (_cb: any) => ({ Disconnect: () => {} }) },
+          PlayerRemoving: { Connect: (_cb: any) => ({ Disconnect: () => {} }), connect: (_cb: any) => ({ Disconnect: () => {} }) },
+          FindFirstChild: (_name: string) => {
+            const p = context.getPlayer?.();
+            return (!p || p.isActive === false) ? null : localPlayerProxy;
+          },
+          WaitForChild: async (_name: string) => localPlayerProxy
+        };
+      })(),
       GetService: (serviceName: string) => {
         const lower = serviceName.toLowerCase();
         if (lower === 'workspace') return workspaceObj;
@@ -1147,8 +1733,8 @@ export class LuauEngine {
         }
         if (lower === 'replicatedstorage') {
           return {
-            FindFirstChild: (name: string) => null,
-            WaitForChild: async (name: string) => null
+            FindFirstChild: (_name: string) => null,
+            WaitForChild: async (_name: string) => null
           };
         }
         return {};
@@ -1156,10 +1742,15 @@ export class LuauEngine {
     };
 
     // Script object with resilient fallback parent
-    const parentPart = context.parentPart || (script.parentPartId && script.parentPartId !== 'Workspace' ? context.parts.find(p => p.id === script.parentPartId) : undefined);
-    const parentProxy = parentPart
-      ? this.createPartProxy(parentPart, context)
-      : (context.parts.length > 0 ? this.createPartProxy(context.parts[0], context) : workspaceObj);
+    let parentProxy: any;
+    if (context.parentPart) {
+      parentProxy = this.createPartProxy(context.parentPart, context);
+    } else if (script.parentPartId && script.parentPartId !== 'Workspace') {
+      const found = context.parts.find(p => p.id === script.parentPartId);
+      parentProxy = found ? this.createPartProxy(found, context) : workspaceObj;
+    } else {
+      parentProxy = workspaceObj;
+    }
 
     const scriptObj = {
       Name: script.name,
@@ -1859,52 +2450,84 @@ export class LuauEngine {
       });
     `;
 
+    const hasEndAtEnd = LuauEngine.hasEndAtEnd(script.source);
+
     try {
       const runner = new Function(sandboxFunctionBody)();
-      runner(
-        scriptObj,
-        workspaceObj,
-        workspaceObj,
-        gameObj,
-        Instance,
-        Vector3,
-        Color3,
-        BrickColor,
-        CFrame,
-        UDim2,
-        UDim,
-        TweenInfo,
-        task,
-        task.wait,
-        customMath,
-        (...args: any[]) => logOutput('print', ...args),
-        (...args: any[]) => logOutput('warn', ...args),
-        (...args: any[]) => logOutput('error', ...args),
-        __vecAdd,
-        __vecSub,
-        __vecMul,
-        __vecDiv,
-        __iterate,
-        yieldCheck,
-        Enum,
-        customTable,
-        customString,
-        customOs,
-        () => performance.now() / 1000,
-        () => performance.now() / 1000,
-        (sec: number, cb: () => void) => setTimeout(cb, Math.max(0, (Number(sec) || 0) * 1000)),
-        (cb: () => void) => setTimeout(cb, 0),
-        (tbl: any) => __iterate(tbl),
-        (tbl: any) => __iterate(tbl),
-        (val: any) => (isNaN(Number(val)) ? null : Number(val)),
-        (val: any) => String(val),
-        null
-      ).catch((runtimeErr: any) => {
-        if (runtimeErr?.message !== '__SCRIPT_CANCELLED__') {
-          logOutput('error', `Erro em tempo de execução: ${runtimeErr?.message || String(runtimeErr)}`);
+      
+      const runExecutionLoop = async () => {
+        let iteration = 0;
+        while (!isCancelled) {
+          iteration++;
+          // Cleanly reset any event listeners attached in previous cycle to avoid stacking
+          if (iteration > 1 && script.parentPartId) {
+            engine.touchListeners.delete(script.parentPartId);
+            engine.clickListeners.delete(script.parentPartId);
+          }
+
+          try {
+            await runner(
+              scriptObj,
+              workspaceObj,
+              workspaceObj,
+              gameObj,
+              Instance,
+              Vector3,
+              Color3,
+              BrickColor,
+              CFrame,
+              UDim2,
+              UDim,
+              TweenInfo,
+              task,
+              task.wait,
+              customMath,
+              (...args: any[]) => logOutput('print', ...args),
+              (...args: any[]) => logOutput('warn', ...args),
+              (...args: any[]) => logOutput('error', ...args),
+              __vecAdd,
+              __vecSub,
+              __vecMul,
+              __vecDiv,
+              __iterate,
+              yieldCheck,
+              Enum,
+              customTable,
+              customString,
+              customOs,
+              () => performance.now() / 1000,
+              () => performance.now() / 1000,
+              (sec: number, cb: () => void) => setTimeout(cb, Math.max(0, (Number(sec) || 0) * 1000)),
+              (cb: () => void) => setTimeout(cb, 0),
+              (tbl: any) => __iterate(tbl),
+              (tbl: any) => __iterate(tbl),
+              (val: any) => (isNaN(Number(val)) ? null : Number(val)),
+              (val: any) => String(val),
+              null
+            );
+          } catch (runtimeErr: any) {
+            if (runtimeErr?.message !== '__SCRIPT_CANCELLED__') {
+              logOutput('error', `Erro em tempo de execução: ${runtimeErr?.message || String(runtimeErr)}`);
+            }
+            break;
+          }
+
+          if (isCancelled) break;
+
+          // Se tem um 'end' no final do script, quando ele terminar de executar execute-o novamente!
+          if (hasEndAtEnd && !isCancelled) {
+            // Heartbeat tick (~32ms) para renderização fluida do loop
+            await new Promise(r => setTimeout(r, 32));
+          } else {
+            break;
+          }
         }
-      });
+        handle.isRunning = false;
+      };
+
+      runExecutionLoop();
     } catch (compileErr: any) {
+      handle.isRunning = false;
       logOutput('error', `Erro ao compilar script: ${compileErr?.message || String(compileErr)}`);
     }
 
@@ -1923,6 +2546,21 @@ export class LuauEngine {
   }
 
   /**
+   * Check if a script is currently running
+   */
+  public isScriptRunning(scriptId: string): boolean {
+    const existing = this.runningScripts.get(scriptId);
+    return !!(existing && existing.isRunning);
+  }
+
+  /**
+   * Get total count of currently executing scripts
+   */
+  public getRunningCount(): number {
+    return this.runningScripts.size;
+  }
+
+  /**
    * Stop all running scripts
    */
   public stopAll() {
@@ -1930,6 +2568,8 @@ export class LuauEngine {
     this.runningScripts.clear();
     this.touchListeners.clear();
     this.clickListeners.clear();
+    this.rigDiedListeners.clear();
+    this.rigHealthChangedListeners.clear();
     this.toolActivatedListeners.clear();
   }
 }

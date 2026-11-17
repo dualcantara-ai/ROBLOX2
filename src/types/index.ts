@@ -12,6 +12,7 @@ export type PartType =
   | 'checkpoint'
   | 'teleporter'
   | 'npc'
+  | 'rig'
   | 'spotlight';
 
 export type MaterialType = 'plastic' | 'neon' | 'metal' | 'glass' | 'wood' | 'brick' | 'forcefield';
